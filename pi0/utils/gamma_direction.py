@@ -74,7 +74,7 @@ def compute_parity_flip(xyz_hit, vector, origin=(0,0,0)):
         return -1.
     return 0.
 
-def do_calculation(data, vtx_data, radius=10., eps=2., min_samples=5, shower_label=2):
+def do_calculation(shower_hits, vtx_data, radius=10., eps=2., min_samples=5, shower_label=2):
     '''
     Calculates the best fit direction of the gamma shower based on a PCA of the
     shower start
@@ -89,8 +89,6 @@ def do_calculation(data, vtx_data, radius=10., eps=2., min_samples=5, shower_lab
         a numpy array Mx8 containing (x,y,z,batch,valid,x_comp,y_comp,z_comp) across vertexes. XX_comp are the components of the unit vectors determined by the PCA, valid is false if fit fails
     
     '''
-    shower_hits_mask = data[:,-1] == shower_label
-    shower_hits = data[shower_hits_mask] # select shower-like hits
     return_data = np.empty((len(vtx_data),8))
     return_pca_data = np.empty((len(vtx_data),6))
     return_pca_nhits = np.empty((len(vtx_data),6))

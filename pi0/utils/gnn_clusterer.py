@@ -21,6 +21,8 @@ from mlreco.utils.data_parallel import DataParallel
 
 def find_shower_gnn(dbscan, groups, em_primaries, energy_data, types, model_name, model_checkpoint, gpu_ind=0, verbose=False):
     """
+    NOTE: THIS IS PROBABLY BROKEN; it was written right after the first pi0 workshop
+    
     dbscan: data parsed from "dbscan_label": ["parse_dbscan", "sparse3d_fivetypes"]
     groups: data parsed from "group_label": ["parse_cluster3d_clean", "cluster3d_mcst", "sparse3d_fivetypes"]
     em_primaries: data parsed from "em_primaries" : ["parse_em_primaries", "sparse3d_data", "particle_mcst"]
