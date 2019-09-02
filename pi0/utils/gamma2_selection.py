@@ -10,6 +10,9 @@ def calculate_sep(data_vec0, data_vec1):
     Args:
         data_vec0 - an 1x6 matrix containing first vector info (x,y,z,dx,dy,dz)
         data_vec1 - an 1x6 matrix containing second vector info (x,y,z,dx,dy,dz)
+    
+    NOTE: The vectors (dx,dy,dz) must be normalized to unit vectors. 
+
     Returns:
         scalar for projection along data_vec0 to reach POCA
         scalar for projection along data_vec1 to reach POCA
@@ -29,16 +32,19 @@ def calculate_sep(data_vec0, data_vec1):
     if s0 > 0 or s1 > 0:
         return 0, 0, np.linalg.norm(d)
     # minimum separation
-    sep = np.sqrt(np.clip(np.linalg.norm(d)**2 + 2*np.dot(d,v0)*s0 - 2*np.dot(d,v1)*s1 - 2*np.dot(v1,v0)*s0*s1 + s0**2 + s1**2,0,None))
+    sep = np.sqrt(np.clip(np.linalg.norm(d)**2 + 2*np.dot(d,v0)*s0 - \
+        2*np.dot(d,v1)*s1 - 2*np.dot(v1,v0)*s0*s1 + s0**2 + s1**2,0,None))
     return s0, s1, sep
 
 def get_best_pair_mask(data_dir, maximum_sep, exclude=np.empty(0)):
     '''
     Finds the indexes of the best pair
     Args:
-        data_dir - an Nx8 matrix containing shower directions associated 1:1 for vertexes (x,y,z,batch,valid,dx,dy,dz)
-        maximum_sep - a maximum separation for best pair, otherwise returns empty array
-        exclude - indexes to exclude from calculation (array)
+        - data_dir: an Nx8 matrix containing shower directions 
+        associated 1:1 for vertexes (x,y,z,batch,valid,dx,dy,dz)
+        - maximum_sep: a maximum separation for best pair, 
+        otherwise returns empty array.
+        - exclude: indexes to exclude from calculation (array)
     Returns:
         vector of length 2 of indexes of best pair
         NxN matrix of distances calculated (upper triangular matrix)
@@ -95,3 +101,23 @@ def do_iterative_selection(data_dir, maximum_sep=3.):
         excluded = np.append(excluded, best_pair)
     return data_label, sep_matrix
         
+def find_POCA(paired_primaries):
+    """
+    Inputs:
+        - paired_primaries: 2 x 8 array, representing a pair of 
+        em_showers.
+
+    Returns:
+        - poca: point of closest approach, given by the mean of the
+        points of closest approach.
+    """
+
+    directions = np.atleast_2d(paired_primaries[:, 3:6])
+    directions = directions / np.linalg.norm(directions, axis=1).reshape(
+        directions.shape[0], 1)
+    data_vec = np.hstack((paired_primaries[:, 0:3], directions))
+    s0, s1, sep = calculate_sep(data_vec[0], data_vec[1])
+    poca1 = data_vec[0][0:3] + s0 * data_vec[0][3:6]
+    poca2 = data_vec[1][0:3] + s1 * data_vec[0][3:6]
+    poca = (poca1 + poca2) / 2
+    return poca

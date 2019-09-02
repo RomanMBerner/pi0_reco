@@ -3,8 +3,52 @@ from mlreco.utils.gnn.cluster import form_clusters_new
 from mlreco.utils.gnn.compton import filter_compton
 from mlreco.visualization.voxels import scatter_label
 from mlreco.utils.gnn.primary import assign_primaries_unique
+from mlreco.utils import metrics
 
 # TODO make sure entire primary cluster is assigned even if it's outside the cone
+
+def cluster_cones(input, primaries, return_truth=False):
+    """
+    Inputs:
+        - input (dict): output from dataiterator, which contains
+        NAME (str) : TENSOR (np.ndarray) items (except for index (list of list))
+
+        NOTE: <input> must be ghost-point removed. Current function uses 
+        the coordinates of <segment_label> by default. 
+
+    Returns:
+        - prediction ((N, 1) np.array): prediction cluster labels for current input.
+        Returns None if some necessary conditions are not met (see inline comments). 
+        - cone_params (list of tuple): list of cone parameters for all cones attached 
+        to the em primary. 
+
+    NOTE: For safety, use batch size 1.
+    """
+    # Check if input contains showers
+    mask = input['segment_label'][:, -1] == 2
+    if mask.shape[0] < 1:
+        return None
+    if return_truth:
+        return input['group_label'][mask][:, -1]
+    else:
+        fit_shower, cone_params = find_shower_cone(
+            input['dbscan_label'][mask],
+            input['group_label'][mask],
+            primaries,
+            input['input_data'][mask],
+            input['segment_label'][mask],
+            return_truth=False,
+            verbose=False
+        )
+        pred = -np.ones(input['input_data'][:, 4][mask].shape)
+        for i, indices in enumerate(fit_shower):
+            if not len(indices):
+                continue
+            pred[indices] = input['group_label'][:, 4][mask][indices]
+        
+        return pred, cone_params
+
+
 
 def find_shower_cone(dbscan, groups, em_primaries, energy_data, types, length_factor=14.107334041, slope_percentile=52.94032412, slope_factor=5.86322059, return_truth=False, verbose=False):
     """
@@ -12,19 +56,22 @@ def find_shower_cone(dbscan, groups, em_primaries, energy_data, types, length_fa
     groups: data parsed from "group_label": ["parse_cluster3d_clean", "cluster3d_mcst", "sparse3d_fivetypes"]
     em_primaries: data parsed from "em_primaries" : ["parse_em_primaries", "sparse3d_data", "particle_mcst"]
     energy_data: data parsed from "input_data": ["parse_sparse3d_scn", "sparse3d_data"]
-    
+    types: (???) Fivetypes label Tensor (N x 5)
+
     returns a list of length len(em_primaries) containing np arrays, each of which contains the indices corresponding to the voxels in the cone of the corresponding EM primary
     """
     clusts = form_clusters_new(dbscan)
-    assigned_primaries = assign_primaries_unique(em_primaries, clusts, groups).astype(int)
+    assigned_primaries = assign_primaries_unique(
+            em_primaries, clusts, groups, use_labels=True).astype(int)
     selected_voxels = []
     true_voxels = []
+    cone_params_list = []
     for i in range(len(assigned_primaries)):
         if assigned_primaries[i] != -1:
             if verbose:
                 print('------')
             c = clusts[assigned_primaries[i]]
-            
+
             if return_truth:
                 group_ids = np.unique(groups[c][:, -1])
                 type_id = -1
@@ -50,7 +97,8 @@ def find_shower_cone(dbscan, groups, em_primaries, energy_data, types, length_fa
             primary_center = np.average(primary_points.T, axis=1, weights=primary_energies)
             primary_axis = primary_center - em_point
 
-            # find furthest particle from cone axis
+            # find furthest particle from cone axis (???)
+            # COMMENT: Maybe not the furthest particle? This seems to select the slope by percentile. 
             primary_length = np.linalg.norm(primary_axis)
             direction = primary_axis / primary_length
             axis_distances = np.linalg.norm(np.cross(primary_points-primary_center, primary_points-em_point), axis=1)/primary_length
@@ -67,10 +115,15 @@ def find_shower_cone(dbscan, groups, em_primaries, energy_data, types, length_fa
             cone_vertex = em_point
             cone_axis = direction
 
+            cone_params = (cone_length, cone_slope, cone_vertex, cone_axis)
+            cone_params_list.append(cone_params)
+
             classified_indices = []
+            # Should be able to vectorize operation. 
             for j in range(len(dbscan)):
                 point = types[j]
                 if point[-1] < 2:
+                    # ??? Why not != 2?
                     continue
                 coord = point[:3]
                 axis_dist = np.dot(coord - em_point, cone_axis)
@@ -86,8 +139,8 @@ def find_shower_cone(dbscan, groups, em_primaries, energy_data, types, length_fa
             if return_truth:
                 true_voxels.append(np.array([]))
             selected_voxels.append(np.array([]))
-    
+
     if return_truth:
-        return true_voxels, selected_voxels
+        return true_voxels, selected_voxels, cone_params_list
     else:
-        return selected_voxels
+        return selected_voxels, cone_params_list
