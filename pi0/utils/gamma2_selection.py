@@ -3,6 +3,7 @@ This module contains methods associated with making a selection of two gamma ori
 
 '''
 import numpy as np
+from pi0.utils import gamma_direction
 
 def calculate_sep(data_vec0, data_vec1):
     '''
@@ -121,3 +122,26 @@ def find_POCA(paired_primaries):
     poca2 = data_vec[1][0:3] + s1 * data_vec[0][3:6]
     poca = (poca1 + poca2) / 2
     return poca
+
+
+def generate_pair_labels(data, em_primaries):
+    """
+    Inputs:
+        - 
+    Returns:
+        - 
+    """
+    # FIXME: Need to choose which method of estimating direciton
+    # Also ignore PCA variables for the moment. 
+    gamma_dir = gamma_direction.do_calculation(data['segment_label'], em_primaries)[0]
+    selected_showers, sep_matrix = do_iterative_selection(
+        gamma_dir, maximum_sep=5.)
+    valid_mask = selected_showers[:, -1] != 0
+    paired_list = np.unique(selected_showers[:, -1][valid_mask])
+    pair_labels = -np.ones((data['group_label'].shape[0], ))
+    for i, plabel in enumerate(paired_list):
+        paired_cluster_labels = em_primaries[selected_showers[:, -1] == plabel][:, -1]
+        mask_pair = np.logical_or(data['group_label'][:, -1] == paired_cluster_labels[0],
+                                  data['group_label'][:, -1] == paired_cluster_labels[1])
+        pair_labels[mask_pair] = i+1
+    return pair_labels

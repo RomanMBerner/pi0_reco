@@ -50,5 +50,4 @@ def do_selection(label_data, gamma0_data, gamma1_data, mip_label=1, tolerance=10
     return_arr[4] = vtx_info[-1]
     return return_arr
 
-
     
