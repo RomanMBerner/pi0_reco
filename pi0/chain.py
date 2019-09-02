@@ -14,7 +14,7 @@ class Shower():
 # Chain object class that loads and stores the chain parameters
 class Pi0Chain():
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, verbose=False):
         '''
         Initializes the chain from the configuration file
         '''
@@ -23,6 +23,7 @@ class Pi0Chain():
         print('Initialized Pi0 mass chain, log path:', log_path)
         self._log = CSVData(log_path)
         self._keys = ['event_id', 'pion_id', 'pion_mass']
+        self.verbose = verbose
 
     def log(self, eid, pion_id, pion_mass):
         self._log.record(self._keys, [eid, pion_id, pion_mass])
@@ -34,18 +35,17 @@ class Pi0Chain():
         Runs the full Pi0 reconstruction chain, from 3D charge
         information to Pi0 masses for events that contain one or more.
         '''
-        # Reconstruct voxel energy if the input is Cluster3D charge
-        if self.cfg['input'] == 'charge':
-            # Filter out ghosts
-            self.filter_ghosts(event)
+        # Filter out ghosts
+        self.filter_ghosts(event)
 
-            # Reconstruct energy
-            self.reconstruct_energy(event)
+        # Reconstruct energy
+        self.reconstruct_energy(event)
 
         # Identify shower starting points
         self.find_shower_starts(event)
         if not len(event['showers']):
-            print('No shower start point found in event', event_id)
+            if self.verbose:
+                print('No shower start point found in event', event_id)
             return []
 
         # Reconstruct shower direction vectors
@@ -57,7 +57,8 @@ class Pi0Chain():
         # Identify pi0 decays
         self.identify_pi0(event)
         if not len(event['matches']):
-            print('No pi0 found in event', event_id)
+            if self.verbose:
+                print('No pi0 found in event', event_id)
             return []
 
         # Compute masses
@@ -71,7 +72,11 @@ class Pi0Chain():
         '''
         Removes ghost points from the charge tensor
         '''
-        if self.cfg['segment']['method'] == 'mask':
+        if self.cfg['input'] == 'energy':
+            # No ghost to filter out
+            pass
+
+        elif self.cfg['segment']['method'] == 'mask':
             mask = np.where(event['ghost'][:,4] == 0) # TODO, should use 6-types
             event['charge'] = event['charge'][mask]
             # TODO must apply masks to more stuff, waiting for data
@@ -100,7 +105,11 @@ class Pi0Chain():
         '''
         Reconstructs energy deposition from charge
         '''
-        if self.cfg['response']['method'] == 'constant':
+        if self.cfg['input'] == 'energy':
+            # Energy already true
+            pass
+
+        elif self.cfg['response']['method'] == 'constant':
             reco = self.cfg['response']['factor']*event['charge'][:,4]
             event['energy'] = event['charge']
             event['energy'][:,4] = reco
@@ -263,7 +272,7 @@ class Pi0Chain():
 
         # Draw voxels with cluster labels
         voxels = event['energy'][:,:3]
-        graph_voxels = scatter_label(voxels, labels)[0]
+        graph_voxels = scatter_label(voxels, labels, 2)[0]
         graph_voxels.name = 'Shower ID'
         graph_data = [graph_voxels]
 
