@@ -303,6 +303,9 @@ class Pi0Chain():
             e1, e2 = s1.energy, s2.energy
             t1, t2 = s1.direction, s2.direction
             costheta = np.dot(t1, t2)
+            if abs(costheta) > 1.:
+                masses.append(0.)
+                continue
             masses.append(sqrt(2*e1*e2*(1-costheta)))
         return masses
 
