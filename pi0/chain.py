@@ -211,6 +211,9 @@ class Pi0Chain():
             points = np.array([s.start+[0.,s.pid]+[0.,0.,0.] for s in self.output['showers']])
             res, _, _ = gamma_direction.do_calculation(self.output['segment'], points)
             for i, shower in enumerate(self.output['showers']):
+                if np.linalg.norm(res[i][-3:]) == 0.:
+                    shower.direction = [0., 0., 0.]
+                    continue
                 shower.direction = list(res[i][-3:]/np.linalg.norm(res[i][-3:]))
 
         else:
