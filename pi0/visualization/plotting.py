@@ -5,12 +5,9 @@ import sys, os
 import importlib
 
 # We will use Plotly for plotting 3D event displays
-import plotly.plotly as py
 import plotly.graph_objs as go
 from plotly.offline import download_plotlyjs, plot, iplot
 
-sys.path.append('/u/nu/koh0207/clustering/lartpc_mlreco3d')
-sys.path.append('pi0_reco')
 from mlreco.visualization import voxels
 
 def plot_event(coords, label, points=None):

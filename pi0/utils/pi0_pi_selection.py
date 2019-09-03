@@ -81,7 +81,6 @@ def generate_pair_labels(data, em_primaries, predict=True):
         return None, []
     for i, plabel in enumerate(paired_list):
         shower_pair = primaries[selected_showers[:, -1] == plabel]
-        print(shower_pair)
         poca = gamma2_selection.find_POCA(shower_pair)
         selection = do_selection(data['segment_label'], shower_pair[0], shower_pair[1])
         if selection.shape[0] < 1:
