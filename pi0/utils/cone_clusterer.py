@@ -3,16 +3,62 @@ from mlreco.utils.gnn.cluster import form_clusters_new
 from mlreco.utils.gnn.compton import filter_compton
 from mlreco.visualization.voxels import scatter_label
 from mlreco.utils.gnn.primary import assign_primaries_unique
-from sklearn.cluster import DBSCAN
-from sklearn.neighbors import KNeighborsClassifier
+from mlreco.utils import metrics
 
-def cluster(positions, em_primaries, params=[14.107334041, 52.94032412, 5.86322059, 1.01], inclusive=True):
+# TODO make sure entire primary cluster is assigned even if it's outside the cone
+
+def cluster_cones(input, primaries, return_truth=False):
     """
-    positions: Nx3 array of EM shower voxel positions
-    em_primaries: Nx3 array of EM primary positions
-    
-    if inclusive=True: returns a list of length len(em_primaries) containing np arrays, each of which contains the indices corresponding to the voxels in the cone of the corresponding EM primary; note that each voxel might thus have multiple labels
-    if inclusive=False: returns a tuple (arr of length len(em_primaries), arr of length len(positions)) corresponding to EM primary labels and the voxel labels; note that each voxel has a unique label
+    Inputs:
+        - input (dict): output from dataiterator, which contains
+        NAME (str) : TENSOR (np.ndarray) items (except for index (list of list))
+
+        NOTE: <input> must be ghost-point removed. Current function uses 
+        the coordinates of <segment_label> by default. 
+
+    Returns:
+        - prediction ((N, 1) np.array): prediction cluster labels for current input.
+        Returns None if some necessary conditions are not met (see inline comments). 
+        - cone_params (list of tuple): list of cone parameters for all cones attached 
+        to the em primary. 
+
+    NOTE: For safety, use batch size 1.
+    """
+    # Check if input contains showers
+    mask = input['segment_label'][:, -1] == 2
+    if mask.shape[0] < 1:
+        return None
+    if return_truth:
+        return input['group_label'][mask][:, -1]
+    else:
+        fit_shower, cone_params = find_shower_cone(
+            input['dbscan_label'][mask],
+            input['group_label'][mask],
+            primaries,
+            input['input_data'][mask],
+            input['segment_label'][mask],
+            return_truth=False,
+            verbose=False
+        )
+        pred = -np.ones(input['input_data'][:, 4][mask].shape)
+        for i, indices in enumerate(fit_shower):
+            if not len(indices):
+                continue
+            pred[indices] = input['group_label'][:, 4][mask][indices]
+        
+        return pred, cone_params
+
+
+
+def find_shower_cone(dbscan, groups, em_primaries, energy_data, types, length_factor=14.107334041, slope_percentile=52.94032412, slope_factor=5.86322059, return_truth=False, verbose=False):
+    """
+    dbscan: data parsed from "dbscan_label": ["parse_dbscan", "sparse3d_fivetypes"]
+    groups: data parsed from "group_label": ["parse_cluster3d_clean", "cluster3d_mcst", "sparse3d_fivetypes"]
+    em_primaries: data parsed from "em_primaries" : ["parse_em_primaries", "sparse3d_data", "particle_mcst"]
+    energy_data: data parsed from "input_data": ["parse_sparse3d_scn", "sparse3d_data"]
+    types: (???) Fivetypes label Tensor (N x 5)
+
+    returns a list of length len(em_primaries) containing np arrays, each of which contains the indices corresponding to the voxels in the cone of the corresponding EM primary
     """
     length_factor = params[0]
     slope_percentile = params[1]
@@ -22,19 +68,28 @@ def cluster(positions, em_primaries, params=[14.107334041, 52.94032412, 5.863220
     dbscan = np.concatenate((positions, np.zeros((len(positions), 1)), dbscan), axis=1)
     
     clusts = form_clusters_new(dbscan)
+    assigned_primaries = assign_primaries_unique(
+            em_primaries, clusts, groups, use_labels=True).astype(int)
     selected_voxels = []
     true_voxels = []
-    
-    if len(clusts) == 0:
-        # assignn everything to first primary
-        selected_voxels.append(np.arange(len(dbscan)))
-        print('all clusters identified as Compton')
-        return selected_voxels
-    assigned_primaries = assign_primaries_unique(np.concatenate((em_primaries, np.zeros((len(em_primaries), 2))), axis=1), clusts, np.concatenate((positions, np.zeros((len(positions), 2))), axis=1)).astype(int)
+    cone_params_list = []
     for i in range(len(assigned_primaries)):
         if assigned_primaries[i] != -1:
             c = clusts[assigned_primaries[i]]
-            
+
+            if return_truth:
+                group_ids = np.unique(groups[c][:, -1])
+                type_id = -1
+                for g in groups[c]:
+                    for j in range(len(types)):
+                        if np.array_equal(g[:3], types[j][:3]):
+                            type_id = types[j][-1]
+                            break
+                    if type_id != -1:
+                        break
+                true_indices = np.where(np.logical_and(np.isin(groups[:, -1], group_ids), types[:, -1] >= 2))[0]
+                true_voxels.append(true_indices)
+
             p = em_primaries[i]
             em_point = p[:3]
 
@@ -43,7 +98,8 @@ def cluster(positions, em_primaries, params=[14.107334041, 52.94032412, 5.863220
             primary_center = np.average(primary_points.T, axis=1)
             primary_axis = primary_center - em_point
 
-            # find furthest particle from cone axis
+            # find furthest particle from cone axis (???)
+            # COMMENT: Maybe not the furthest particle? This seems to select the slope by percentile. 
             primary_length = np.linalg.norm(primary_axis)
             direction = primary_axis / primary_length
             axis_distances = np.linalg.norm(np.cross(primary_points-primary_center, primary_points-em_point), axis=1)/primary_length
@@ -56,9 +112,16 @@ def cluster(positions, em_primaries, params=[14.107334041, 52.94032412, 5.863220
             cone_vertex = em_point
             cone_axis = direction
 
+            cone_params = (cone_length, cone_slope, cone_vertex, cone_axis)
+            cone_params_list.append(cone_params)
+
             classified_indices = []
+            # Should be able to vectorize operation. 
             for j in range(len(dbscan)):
-                point = positions[j]
+                point = types[j]
+                if point[-1] < 2:
+                    # ??? Why not != 2?
+                    continue
                 coord = point[:3]
                 axis_dist = np.dot(coord - em_point, cone_axis)
                 if 0 <= axis_dist and axis_dist <= cone_length:
@@ -71,30 +134,8 @@ def cluster(positions, em_primaries, params=[14.107334041, 52.94032412, 5.863220
             selected_voxels.append(classified_indices)
         else:
             selected_voxels.append(np.array([]))
-    
-    # don't require that each voxel can only be in one group
-    if inclusive:
-        return selected_voxels
-    
-    # require each voxel can only be in one group (order groups in descending size to overwrite large groups)
-    em_primary_labels = -np.ones(len(selected_voxels))
-    node_labels = -np.ones(len(positions))
-    lengths = []
-    for group in selected_voxels:
-        lengths.append(len(group))
-    sorter = np.argsort(lengths)[::-1]
-    for l in range(len(selected_voxels)):
-        if len(selected_voxels[sorter[l]]) > 0:
-            node_labels[selected_voxels[sorter[l]]] = l
-            em_primary_labels[sorter[l]] = l
-    
-    labeled = np.where(node_labels != -1)
-    unlabeled = np.where(node_labels == -1)
-    if len(labeled[0]) > 5 and len(unlabeled[0]) > 0:
-        classified_positions = positions[labeled]
-        unclassified_positions = positions[unlabeled]
-        cl = KNeighborsClassifier(n_neighbors=2)
-        cl.fit(classified_positions, node_labels[labeled])
-        node_labels[unlabeled] = cl.predict(unclassified_positions)
-    
-    return em_primary_labels, node_labels
+
+    if return_truth:
+        return true_voxels, selected_voxels, cone_params_list
+    else:
+        return selected_voxels, cone_params_list

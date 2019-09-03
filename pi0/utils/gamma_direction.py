@@ -1,7 +1,7 @@
 '''
 This module contains methods associated with inferring the direction of a gamma shower
 
-''' 
+'''
 import numpy as np
 from sklearn.cluster import DBSCAN
 
@@ -28,7 +28,7 @@ def dbscan_find_primary(xyz_hit, eps, min_samples):
         min_samples - min_samples for dbscan
     Return:
         Nx1 mask for most common cluster, if not noise, else returns Nx1 array of True
-    
+
     '''
     db = DBSCAN(eps=eps, min_samples=min_samples).fit(xyz_hit)
     core_hits_mask = np.zeros_like(db.labels_, dtype=bool)
@@ -41,7 +41,7 @@ def dbscan_find_primary(xyz_hit, eps, min_samples):
     if not max_label == -1:
         return labels == max_label & core_hits_mask
     return labels == max_label
-    
+
 def pca(xyz_hit):
     '''
     Performs a PCA fit to hit locations
@@ -74,21 +74,25 @@ def compute_parity_flip(xyz_hit, vector, origin=(0,0,0)):
         return -1.
     return 0.
 
-def do_calculation(shower_hits, vtx_data, radius=10., eps=2., min_samples=5, shower_label=2):
+def do_calculation(data, em_primaries, radius=10., eps=2., min_samples=5, shower_label=2):
     '''
     Calculates the best fit direction of the gamma shower based on a PCA of the
     shower start
     Args:
         data - a numpy array Nx5 containing hits associated with gamma shower (x,y,z,batch,fivetypes label)
-        vtxs - a numpy array Mx5 containing shower vertexes (x,y,z,batch,label)
+        em_primaries - a numpy array Mx8 containing shower vertexes (x,y,z,dx,dy,dz,batch,label)
         radius - hits within this radius are passed along to dbscan
         eps - epsilon for dbscan
         min_samples - min_samples for dbscan
         shower_label - label number for filtering ``data`` by fivetypes label
     Returns:
         a numpy array Mx8 containing (x,y,z,batch,valid,x_comp,y_comp,z_comp) across vertexes. XX_comp are the components of the unit vectors determined by the PCA, valid is false if fit fails
-    
+
     '''
+    vtx_data = em_primaries.copy()
+    vtx_data[:, [3, 4, 5, 6, 7]] = vtx_data[:, [6, 7, 3, 4, 5]]
+    shower_hits_mask = data[:,-1] == shower_label
+    shower_hits = data[shower_hits_mask] # select shower-like hits
     return_data = np.empty((len(vtx_data),8))
     return_pca_data = np.empty((len(vtx_data),6))
     return_pca_nhits = np.empty((len(vtx_data),6))
@@ -113,4 +117,4 @@ def do_calculation(shower_hits, vtx_data, radius=10., eps=2., min_samples=5, sho
         return_data[idx] = np.array(list(vtx[:4]) + [True] + list(pca_vecs[0]*parity))
         return_pca_data[idx] = np.array(list(vtx[:4]) + [True] + list([np.sqrt(pca_vals[1]**2 + pca_vals[2]**2)]))
         return_pca_nhits[idx] = np.array(list(vtx[:4]) + [True] + list([len(associated_hits)]))
-    return return_data, return_pca_data, return_pca_nhits
+    return (return_data, return_pca_data, return_pca_nhits)
