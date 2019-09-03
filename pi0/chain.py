@@ -306,11 +306,13 @@ class Pi0Chain():
     def draw(self):
         from mlreco.visualization import plotly_layout3d
         from mlreco.visualization.voxels import scatter_voxels, scatter_label
-        from plotly.offline import iplot
-        import plotly.graph_objects as go
+        import plotly.plotly as py
+        import plotly.graph_objs as go
+        from plotly.offline import init_notebook_mode, iplot
+        init_notebook_mode(connected=False)
 
         # Create labels for the voxels
-        # Use a different color for each cluster
+        # Use a different color for each cluster        
         labels = np.full(len(self.output['energy'][:,4]), -1)
         for i, s in enumerate(self.output['showers']):
             labels[s.voxels] = i
@@ -321,21 +323,22 @@ class Pi0Chain():
         graph_voxels.name = 'Shower ID'
         graph_data = [graph_voxels]
 
-        # Add EM primary points
-        points = np.array([s.start for s in self.output['showers']])
-        graph_start = scatter_voxels(points)[0]
-        graph_start.name = 'Shower starts'
-        graph_data.append(graph_start)
+        if len(self.output['showers']):
+            # Add EM primary points
+            points = np.array([s.start for s in self.output['showers']])
+            graph_start = scatter_voxels(points)[0]
+            graph_start.name = 'Shower starts'
+            graph_data.append(graph_start)
 
-        # Add a vertex if matches, join vertex to start points
-        for i, m in enumerate(self.output['matches']):
-            v = self.output['vertices'][i]
-            s1, s2 = self.output['showers'][m[0]].start, self.output['showers'][m[1]].start
-            points = [v, s1, v, s2]
-            line = scatter_voxels(np.array(points))[0]
-            line.name = 'Pi0 Decay'
-            line.mode = 'lines,markers'
-            graph_data.append(line)
+            # Add a vertex if matches, join vertex to start points
+            for i, m in enumerate(self.output['matches']):
+                v = self.output['vertices'][i]
+                s1, s2 = self.output['showers'][m[0]].start, self.output['showers'][m[1]].start
+                points = [v, s1, v, s2]
+                line = scatter_voxels(np.array(points))[0]
+                line.name = 'Pi0 Decay'
+                line.mode = 'lines,markers'
+                graph_data.append(line)
 
         # Draw
         iplot(go.Figure(data=graph_data,layout=plotly_layout3d()))
