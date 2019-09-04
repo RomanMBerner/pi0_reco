@@ -219,7 +219,7 @@ class Pi0Chain():
             points = np.array([s.start for s in self.output['showers']])
             try:
                 res = self.dir_est.get_directions(self.output['energy'][mask], self.output['segment'][mask], points, mode=algo)
-            except IndexError: # Cluster was not found for at least one primary
+            except AssertionError: # Cluster was not found for at least one primary
                 res = [[0., 0., 0.] for _ in range(len(self.output['showers']))]
                     
             for i, shower in enumerate(self.output['showers']):
