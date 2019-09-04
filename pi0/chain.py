@@ -23,18 +23,18 @@ class Pi0Chain():
         '''
         # Initialize the data loader
         io_cfg = yaml.load(io_cfg,Loader=yaml.Loader)
-        
+
         # Save config, initialize output
         self.cfg = chain_cfg
         self.verbose = verbose
         self.output = {}
-        
+
         # Initialize log
         log_path = chain_cfg['name']+'_log.csv'
         print('Initialized Pi0 mass chain, log path:', log_path)
         self._log = CSVData(log_path)
         self._keys = ['event_id', 'pion_id', 'pion_mass']
-        
+
         # If a network is specified, initialize the network
         self.network = False
         if chain_cfg['segment'] == 'uresnet' or chain_cfg['shower_start'] == 'ppn':
@@ -50,10 +50,10 @@ class Pi0Chain():
         # Instantiate "handlers" (IO tools)
         self.hs = prepare(io_cfg)
         self.data_set = iter(self.hs.data_io)
-        
+
     def hs(self):
         return self.hs
-        
+
     def data_set(self):
         return self.data_set
 
@@ -61,7 +61,7 @@ class Pi0Chain():
         self._log.record(self._keys, [eid, pion_id, pion_mass])
         self._log.write()
         self._log.flush()
-        
+
     def run(self):
         '''
         Runs the full Pi0 reconstruction chain, from 3D charge
@@ -143,10 +143,10 @@ class Pi0Chain():
 
         elif self.cfg['segment'] == 'uresnet':
             # Get the segmentation output of the network
-            res = output['segmentation']
+            res = self.output['forward']['segmentation'][0]
 
             # Argmax to determine most probable label
-            pred_labels = np.argmax(res['segmentation'], axis=1)
+            pred_labels = np.argmax(res, axis=1)
             mask = np.where(pred_labels != 5)
             self.output['charge'] = event['charge'][mask]
             self.output['segment'] = copy(event['segment_label_reco'])
@@ -168,7 +168,7 @@ class Pi0Chain():
             reco = self.cfg['response_cst']*event['charge'][:,4]
             self.output['energy'] = copy(event['charge'])
             self.output['energy'][:,4] = reco
-            
+
         elif self.cfg['response'] == 'full':
             raise NotImplementedError('Proper energy reconstruction not implemented yet')
 
@@ -318,7 +318,7 @@ class Pi0Chain():
         init_notebook_mode(connected=False)
 
         # Create labels for the voxels
-        # Use a different color for each cluster        
+        # Use a different color for each cluster
         labels = np.full(len(self.output['energy'][:,4]), -1)
         for i, s in enumerate(self.output['showers']):
             labels[s.voxels] = i
@@ -358,11 +358,3 @@ class Pi0Chain():
         if pdg_code == 22 or pdg_code == 11:
             return True
         return False
-    
-    @staticmethod
-    def prepare_network(cfg):
-        '''
-        Initialize a network and returns a forward function
-        '''
-        process_config(yaml.load(cfg, Loader=yaml.Loader))
-        return prepare(cfg).trainer.forward
