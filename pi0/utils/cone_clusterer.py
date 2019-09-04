@@ -60,6 +60,13 @@ def find_shower_cone(dbscan, groups, em_primaries, energy_data, types, length_fa
 
     returns a list of length len(em_primaries) containing np arrays, each of which contains the indices corresponding to the voxels in the cone of the corresponding EM primary
     """
+    length_factor = params[0]
+    slope_percentile = params[1]
+    slope_factor = params[2]
+    
+    dbscan = DBSCAN(eps=params[3], min_samples=3).fit(positions).labels_.reshape(-1, 1)
+    dbscan = np.concatenate((positions, np.zeros((len(positions), 1)), dbscan), axis=1)
+    
     clusts = form_clusters_new(dbscan)
     assigned_primaries = assign_primaries_unique(
             em_primaries, clusts, groups, use_labels=True).astype(int)
@@ -68,8 +75,6 @@ def find_shower_cone(dbscan, groups, em_primaries, energy_data, types, length_fa
     cone_params_list = []
     for i in range(len(assigned_primaries)):
         if assigned_primaries[i] != -1:
-            if verbose:
-                print('------')
             c = clusts[assigned_primaries[i]]
 
             if return_truth:
@@ -90,11 +95,7 @@ def find_shower_cone(dbscan, groups, em_primaries, energy_data, types, length_fa
 
             # find primary cluster axis
             primary_points = dbscan[c][:, :3]
-            primary_energies = energy_data[c][:, -1]
-            if np.sum(primary_energies) == 0:
-                selected_voxels.append(np.array([]))
-                continue
-            primary_center = np.average(primary_points.T, axis=1, weights=primary_energies)
+            primary_center = np.average(primary_points.T, axis=1)
             primary_axis = primary_center - em_point
 
             # find furthest particle from cone axis (???)
@@ -104,11 +105,7 @@ def find_shower_cone(dbscan, groups, em_primaries, energy_data, types, length_fa
             axis_distances = np.linalg.norm(np.cross(primary_points-primary_center, primary_points-em_point), axis=1)/primary_length
             axis_projections = np.dot(primary_points - em_point, direction)
             primary_slope = np.percentile(axis_distances/axis_projections, slope_percentile)
-            if verbose:
-                print('primary cluster half-length', primary_length)
-                print('primary cluster selected cone angle', np.arctan(primary_slope)/np.pi*180)
-
-
+            
             # define a cone around the primary axis
             cone_length = length_factor * primary_length
             cone_slope = slope_factor * primary_slope
@@ -136,8 +133,6 @@ def find_shower_cone(dbscan, groups, em_primaries, energy_data, types, length_fa
             classified_indices = np.array(classified_indices)
             selected_voxels.append(classified_indices)
         else:
-            if return_truth:
-                true_voxels.append(np.array([]))
             selected_voxels.append(np.array([]))
 
     if return_truth:

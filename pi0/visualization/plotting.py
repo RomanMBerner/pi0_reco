@@ -15,7 +15,7 @@ def plot_event(coords, label, points=None):
     This removes ghost points. 
     """
     trace = voxels.scatter_label(coords, 
-                                 label)
+                                 label, markersize=2)
     if points is not None:
         trace_primaries = go.Scatter3d(x=points[:, 0],
                                y=points[:, 1],
