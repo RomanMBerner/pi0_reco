@@ -2,6 +2,7 @@ import numpy as np
 import yaml
 from copy import copy
 from .utils import gamma_direction, cone_clusterer, pi0_pi_selection
+from .directions.estimator import DirectionEstimator
 from mlreco.main_funcs import process_config, prepare
 from mlreco.utils import CSVData
 
@@ -43,6 +44,10 @@ class Pi0Chain():
                 net_cfg = yaml.load(cfg_file,Loader=yaml.Loader)
             io_cfg['model'] = net_cfg['model']
             io_cfg['trainval'] = net_cfg['trainval']
+            
+        # If a direction estimator is requested, initialize it
+        if chain_cfg['shower_dir'] != 'truth':
+            self.dir_est = DirectionEstimator()
 
         # Pre-process configuration
         process_config(io_cfg)
@@ -68,7 +73,8 @@ class Pi0Chain():
         information to Pi0 masses for events that contain one
         or more Pi0 decay.
         '''
-        for i in range(len(self.hs.data_io)):
+        n_events = len(self.hs.data_io)
+        for i in range(n_events):
             self.run_loop()
 
     def run_loop(self):
@@ -206,15 +212,18 @@ class Pi0Chain():
                 mom = [part.px(), part.py(), part.pz()]
                 shower.direction = list(np.array(mom)/np.linalg.norm(mom))
 
-        elif self.cfg['shower_dir'] == 'pca':
+        elif self.cfg['shower_dir'] == 'pca' or self.cfg['shower_dir'] == 'cent':
             # Apply DBSCAN, PCA on the touching cluster to get angles
-            points = np.array([s.start+[0.,s.pid]+[0.,0.,0.] for s in self.output['showers']])
-            res, _, _ = gamma_direction.do_calculation(self.output['segment'], points)
+            algo = self.cfg['shower_dir']
+            mask = np.where(self.output['segment'] == 2)[0]
+            points = np.array([s.start for s in self.output['showers']])
+            try:
+                res = self.dir_est.get_directions(self.output['energy'][mask], self.output['segment'][mask], points, mode=algo)
+            except IndexError: # Cluster was not found for at least one primary
+                res = [[0., 0., 0.] for _ in range(len(self.output['showers']))]
+                    
             for i, shower in enumerate(self.output['showers']):
-                if np.linalg.norm(res[i][-3:]) == 0.:
-                    shower.direction = [0., 0., 0.]
-                    continue
-                shower.direction = list(res[i][-3:]/np.linalg.norm(res[i][-3:]))
+                shower.direction = res[i]
 
         else:
             raise ValueError('Shower direction reconstruction method not recognized:', self.cfg['shower_dir'])
