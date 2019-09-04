@@ -9,10 +9,13 @@ from sklearn.cluster import DBSCAN
 from sklearn.decomposition import PCA
 from scipy.spatial.distance import cdist
 
+# Drop clusters with size < 30
+# Return default vector if found no clusters
+
 
 class FragmentEstimator:
 
-    def __init__(self, eps=6.0, min_samples=30, min_energy=0.05):
+    def __init__(self, eps=2.0, min_samples=5, min_energy=0.05):
         
         self._clusterer = DBSCAN(eps=eps, min_samples=min_samples)
         self._min_energy = min_energy
@@ -68,6 +71,8 @@ class FragmentEstimator:
             clusts.append(ind)
         centroids = np.asarray(centroids)
         self._centroids = centroids
+        if len(clusts) == 0 and centroids.shape[0] == 0:
+            print("No fragments were found for the supplied DBSCAN parameters")
         return clusts
 
 
@@ -124,7 +129,7 @@ class FragmentEstimator:
 
 class DirectionEstimator(FragmentEstimator):
 
-    def __init__(self, eps=6, min_samples=30, min_energy=0.05):
+    def __init__(self, eps=2, min_samples=5, min_energy=0.05):
         super().__init__(eps=eps, min_samples=min_samples, min_energy=min_energy)
         self._directions = None
 
@@ -137,10 +142,16 @@ class DirectionEstimator(FragmentEstimator):
         self.assign_frags_to_primary(shower_energy, shower_segment_label, 
                                      primaries, max_distance=max_distance)
         directions = []
+        if len(self.clusts) == 0:
+            print("FragmentEstimator found no fragments, returning None")
+            return None
         for i, p in enumerate(self.primaries[:, :3]):
+            origin = p[:3]
             indices = self.clusts[i]
             if mode == 'pca':
                 direction = self.pca_estimate(self.coords[indices])
+                parity = self.compute_parity_flip(self.coords[indices], direction, origin=origin)
+                direction *= parity
             elif mode == 'cent':
                 weights = self.voxel_weights[indices]
                 direction = self.centroid_estimate(self.coords[indices], p)
@@ -148,7 +159,8 @@ class DirectionEstimator(FragmentEstimator):
                 raise ValueError('Invalid Direction Estimation Mode')
             directions.append(direction)
         directions = np.asarray(directions)
-        directions = directions / np.linalg.norm(directions, axis=1).reshape(directions.shape[0], 1)
+        directions = directions / np.linalg.norm(directions, axis=1).reshape(
+            directions.shape[0], 1)
         return directions
 
     def centroid_estimate(self, coords, primary, weights=None):
@@ -159,3 +171,24 @@ class DirectionEstimator(FragmentEstimator):
     def pca_estimate(self, coords):
         fit = PCA(n_components=1).fit(coords)
         return fit.components_.squeeze(0)
+
+    def compute_parity_flip(self, xyz_hit, vector, origin=(0,0,0)):
+        '''
+        Uses the dot product of the average xyz_hit vector and the specified 
+        vector to determine if vector in same, opposite, or parallel to most hits
+        Args:
+            xyz_hit - an Nx3 array of hit locations
+            vector - a length 3 comparison vector
+            origin - an optional offset to remove from each xyz_hit vector
+        Returns:
+            -1 if vector and avg xyz_hit vector are in opposite directions and
+            +1 if in the same direction. 0 if they are perpendicular
+        '''
+        xyz_d = xyz_hit - origin
+        xyz_avg = np.mean(xyz_d, axis=0)
+        dot = np.dot(xyz_avg, vector)
+        if dot > 0:
+            return +1.
+        elif dot < 0:
+            return -1.
+        return 0.
