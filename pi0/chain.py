@@ -1,8 +1,9 @@
 import numpy as np
 import yaml
 from copy import copy
-from .utils import gamma_direction, cone_clusterer, pi0_pi_selection
+from .utils import cone_clusterer
 from .directions.estimator import DirectionEstimator
+from .identification.matcher import Pi0Matcher
 from mlreco.main_funcs import process_config, prepare
 from mlreco.utils import CSVData
 
@@ -48,6 +49,10 @@ class Pi0Chain():
         # If a direction estimator is requested, initialize it
         if chain_cfg['shower_dir'] != 'truth':
             self.dir_est = DirectionEstimator()
+            
+        # If a pi0 identifier is requested, initialize it
+        if chain_cfg['shower_match'] == 'proximity':
+            self.matcher = Pi0Matcher()
 
         # Pre-process configuration
         process_config(io_cfg)
@@ -103,9 +108,9 @@ class Pi0Chain():
         # Reconstruct energy
         self.reconstruct_energy(event)
 
-        # Identify shower starting points
+        # Identify shower starting points, skip if there is less than 2 (no pi0)
         self.find_shower_starts(event)
-        if not len(self.output['showers']):
+        if len(self.output['showers']) < 2:
             if self.verbose:
                 print('No shower start point found in event', event_id)
             return []
@@ -218,8 +223,10 @@ class Pi0Chain():
             mask = np.where(self.output['segment'] == 2)[0]
             points = np.array([s.start for s in self.output['showers']])
             try:
-                res = self.dir_est.get_directions(self.output['energy'][mask], self.output['segment'][mask], points, mode=algo)
-            except AssertionError: # Cluster was not found for at least one primary
+                res = self.dir_est.get_directions(self.output['energy'][mask], self.output['segment'][mask], points, max_distance=10, mode=algo)
+            except AssertionError as err: # Cluster was not found for at least one primary
+                if self.verbose:
+                    print('Error in direction reconstruction:', err)
                 res = [[0., 0., 0.] for _ in range(len(self.output['showers']))]
                     
             for i, shower in enumerate(self.output['showers']):
@@ -290,13 +297,14 @@ class Pi0Chain():
 
         elif self.cfg['shower_match'] == 'proximity':
             # Pair closest shower vectors
-            points = np.array([s.start+[0,s.pid]+s.direction for s in self.output['showers']])
-            event['segment_label'] = self.output['segment']
-            event['group_label'] = self.output['group']
-            res, vertices = pi0_pi_selection.generate_pair_labels(event, points, predict=False)
-            for i, v in enumerate(vertices):
-                self.output['matches'].append([0,1]) # TODO, must ask DHK
-                self.output['vertices'].append(v)
+            points = np.array([s.start for s in self.output['showers']])
+            dirs = np.array([s.direction for s in self.output['showers']])
+            try:
+                self.output['matches'], self.output['vertices'], dists =\
+                    self.matcher.find_matches(points, dirs, self.output['segment'])
+            except ValueError as err:
+                if self.verbose:
+                    print('Error in PID:', err)
 
         else:
             raise ValueError('Shower matching method not recognized:', self.cfg['shower_match'])
