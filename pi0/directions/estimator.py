@@ -116,6 +116,11 @@ class DirectionEstimator():
             origin = p[:3]
             indices = fragments[i]
             coords = shower_energy[indices, :3]
+            if max_distance < float('inf'):
+                minid = np.argmin(cdist(coords, [origin]).flatten())
+                dists = cdist(coords, [coords[minid]]).flatten()
+                dist_mask = np.where(dists < max_distance)[0]
+                coords = coords[dist_mask]
             if mode == 'pca':
                 direction = self.pca_estimate(coords)
                 parity = self.compute_parity_flip(coords, direction, origin)
@@ -124,7 +129,7 @@ class DirectionEstimator():
                 weights = None
                 if weighted:
                     weights = shower_energy[indices, -1]
-                direction = self.centroid_estimate(coords, p, weights)
+                direction = self.centroid_estimate(coords, origin, weights)
             else:
                 raise ValueError('Invalid Direction Estimation Mode')
             directions.append(direction)
