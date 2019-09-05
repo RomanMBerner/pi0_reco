@@ -121,22 +121,19 @@ class ConeClusterer:
     Clustering module using cone-clustering.
     """
 
-    def __init__(self, dir_estimator, params):
+    def __init__(self, params={}):
         """
         Initializer for ConeCluster Class.
 
         Inputs:
-            - dir_estimator (DirectionEstimator Object): DirectionEstimator module
-            for predicting shower directions. 
+
             - params (dict): list of parameters specific to cone clustering. 
         """
         self._cones = []
         self.scale_height = params.get('scale_height', 14.107334041)
         self.scale_slope = params.get('scale_slope', 5.86322059)
         self.slope_percentile = params.get('slope_percentile', 53.0)
-        self.dir_estimator = dir_estimator
         self.predict_mode = params.get('predict_mode', 'score')
-        self.direction_mode = params.get('direction_mode', 'pca')
 
     def make_cone(self, coords, vertex, direction, name='None'):
         """
@@ -146,7 +143,7 @@ class ConeClusterer:
             - coords (np.ndarray): N x 3 array of spatial coordinates
             - vertex (np.ndarray): (3,) array containing vertex coordinates
             - direction (np.ndarray): (3,) array containing the normalized axis
-            direction vector from dir_estimator. 
+            direction vector.
 
         Returns:
             - cone (Cone Object): Cone object with the specified parameters. 
@@ -156,22 +153,26 @@ class ConeClusterer:
         pars = np.dot(coords - vertex, direction)
         perps = np.linalg.norm(np.cross(coords - vertex, direction), axis=1)
         slopes = perps / pars
+        mask = np.where(slopes > 0)[0]
+        if not len(mask):
+            raise ValueError
         slope = np.percentile(slopes[slopes > 0], self.slope_percentile)
         cone = Cone(vertex[:3], direction, height, slope * self.scale_slope, name=name)
         return cone
 
-    def fit_cones(self, shower_energy, primaries, mode='pca'):
+    def fit_cones(self, shower_energy, primaries, directions):
         self._cones = []
-        directions = self.dir_estimator.get_directions(shower_energy, primaries, mode=mode)
-        axes = self.dir_estimator.get_directions(shower_energy, 
-            primaries, mode='cent')
+        frag_est = FragmentEstimator()
+        frag_est.assign_frags_to_primary(shower_energy, primaries)
+        if len(frag_est.clusts) != len(primaries):
+            raise AssertionError("FragmentEstimator did not find a fragment for each primary")
         for i, p in enumerate(primaries):
-            vertex, axis, direction = p[:3], axes[i], directions[i]
-            ind = self.dir_estimator.clusts[i]
-            cone = self.make_cone(self.dir_estimator.coords[ind], vertex, directions[i])
+            vertex, direction = p[:3], directions[i]
+            ind = frag_est.clusts[i]
+            cone = self.make_cone(frag_est.coords[ind], vertex, directions[i])
             self._cones.append(cone)
 
-    def fit_predict(self, shower_energy, primaries, mode='pca'):
+    def fit_predict(self, shower_energy, primaries, directions):
         """
         For given N x 5 array of shower coordinate and energy depositions, run
         cone-clustering with the fitted cones.
@@ -192,7 +193,7 @@ class ConeClusterer:
         backwards in time to lie within any cone. 
 
         """
-        self.fit_cones(shower_energy, primaries, mode=mode)
+        self.fit_cones(shower_energy, primaries, directions)
         if self.predict_mode == 'contain':
             pred = -np.ones((shower_energy.shape[0], ))
             for i, cone in enumerate(self._cones):

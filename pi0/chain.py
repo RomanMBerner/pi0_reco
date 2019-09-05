@@ -1,8 +1,8 @@
 import numpy as np
 import yaml
 from copy import copy
-from .utils import cone_clusterer
 from .directions.estimator import DirectionEstimator
+from .cluster.cone_clusterer import ConeClusterer
 from .identification.matcher import Pi0Matcher
 from mlreco.main_funcs import process_config, prepare
 from mlreco.utils import CSVData
@@ -49,6 +49,10 @@ class Pi0Chain():
         # If a direction estimator is requested, initialize it
         if chain_cfg['shower_dir'] != 'truth':
             self.dir_est = DirectionEstimator()
+            
+        # If a clusterer is requested, initialize it
+        if chain_cfg['shower_energy'] == 'cone':
+            self.clusterer = ConeClusterer()
             
         # If a pi0 identifier is requested, initialize it
         if chain_cfg['shower_match'] == 'proximity':
@@ -223,7 +227,7 @@ class Pi0Chain():
             mask = np.where(self.output['segment'] == 2)[0]
             points = np.array([s.start for s in self.output['showers']])
             try:
-                res = self.dir_est.get_directions(self.output['energy'][mask], self.output['segment'][mask], points, max_distance=10, mode=algo)
+                res = self.dir_est.get_directions(self.output['energy'][mask], points, max_distance=10, mode=algo)
             except AssertionError as err: # Cluster was not found for at least one primary
                 if self.verbose:
                     print('Error in direction reconstruction:', err)
@@ -258,16 +262,25 @@ class Pi0Chain():
 
         elif self.cfg['shower_energy'] == 'cone':
             # Fits cones to each shower, adds energies within that cone
-            points = np.array([s.start+[0.,s.pid] for s in self.output['showers']])
-            res = cone_clusterer.find_shower_cone(self.output['dbscan'],
-                self.output['group'], points, self.output['energy'],
-                self.output['segment'])[0] # This returns one array of voxel ids per primary
+            points = np.array([s.start for s in self.output['showers']])
+            dirs = np.array([s.direction for s in self.output['showers']])
+            mask = np.where(self.output['segment'] == 2)[0]
+            try:
+                pred = self.clusterer.fit_predict(self.output['energy'][mask,:3], points, dirs)
+            except (ValueError, AssertionError):
+                for i, shower in enumerate(self.output['showers']):
+                    shower.voxels = []
+                    shower.energy = 0.
+                return
+            padded_pred = np.full(len(self.output['segment']), -1)
+            padded_pred[mask] = pred
             for i, shower in enumerate(self.output['showers']):
-                if not len(res[i]):
+                shower_mask = np.where(padded_pred == i)[0]
+                if not len(shower_mask):
                     shower.energy = 0.
                     continue
-                shower.voxels = res[i]
-                shower.energy = np.sum(self.output['energy'][res[i]][:,4])
+                shower.voxels = shower_mask
+                shower.energy = np.sum(self.output['energy'][shower_mask][:,4])
 
         else:
             raise ValueError('Shower energy reconstruction method not recognized:', self.cfg['shower_energy'])
