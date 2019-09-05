@@ -122,12 +122,12 @@ class FragmentEstimator:
 
 class DirectionEstimator(FragmentEstimator):
 
-    def __init__(self, eps=2, min_samples=5, min_energy=0.05):
+    def __init__(self, eps=2, min_samples=5, min_energy=0.):
         super().__init__(eps=eps, min_samples=min_samples, min_energy=min_energy)
         self._directions = None
 
     def get_directions(self, shower_energy, primaries, 
-                       max_distance=float('inf'), mode='pca', normalize=True, weights=None):
+                       max_distance=float('inf'), mode='pca', normalize=True, weighted=False):
         """
         Given data (see FragmentEstimator docstring), return estimated 
         unit direction vectors for each primary. 
@@ -144,7 +144,10 @@ class DirectionEstimator(FragmentEstimator):
                 parity = self.compute_parity_flip(self.coords[indices], direction, origin)
                 direction *= parity
             elif mode == 'cent':
-                direction = self.centroid_estimate(self.coords[indices], p, weights=weights)
+                weights = None
+                if weighted:
+                    weights = shower_energy[:,-4][indices]
+                direction = self.centroid_estimate(self.coords[indices], p, weights)
             else:
                 raise ValueError('Invalid Direction Estimation Mode')
             directions.append(direction)
