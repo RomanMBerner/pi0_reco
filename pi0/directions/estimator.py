@@ -65,8 +65,8 @@ class FragmentEstimator:
             clusts.append(ind)
         centroids = np.asarray(centroids)
         self._centroids = centroids
-        if len(clusts) == 0 and centroids.shape[0] == 0:
-            print("No fragments were found for the supplied DBSCAN parameters")
+        #if len(clusts) == 0 and centroids.shape[0] == 0:
+        #    print("No fragments were found for the supplied DBSCAN parameters")
         return clusts
 
 
@@ -134,15 +134,14 @@ class DirectionEstimator(FragmentEstimator):
         """
         self.assign_frags_to_primary(shower_energy, primaries, max_distance=max_distance)
         directions = []
-        if len(self.clusts) == 0:
-            print("FragmentEstimator found no fragments, returning None")
-            return None
+        if len(self.clusts) != len(primaries):
+            raise AssertionError("FragmentEstimator did not find a fragment for each primary")
         for i, p in enumerate(self.primaries[:, :3]):
             origin = p[:3]
             indices = self.clusts[i]
             if mode == 'pca':
                 direction = self.pca_estimate(self.coords[indices])
-                parity = self.compute_parity_flip(self.coords[indices], direction, origin=origin)
+                parity = self.compute_parity_flip(self.coords[indices], direction, origin)
                 direction *= parity
             elif mode == 'cent':
                 direction = self.centroid_estimate(self.coords[indices], p, weights=weights)
@@ -165,26 +164,23 @@ class DirectionEstimator(FragmentEstimator):
         fit = PCA(n_components=1).fit(coords)
         return fit.components_.squeeze(0)
 
-    def compute_parity_flip(self, xyz_hit, vector, origin=(0,0,0)):
+    def compute_parity_flip(self, coords, direction, origin):
         '''
-        Uses the dot product of the average xyz_hit vector and the specified 
+        Uses the dot product of the average vector and the specified 
         vector to determine if vector in same, opposite, or parallel to most hits
-        Args:
-            xyz_hit - an Nx3 array of hit locations
-            vector - a length 3 comparison vector
-            origin - an optional offset to remove from each xyz_hit vector
+        
+        Inputs:
+            - coords (N x 3): spatial coordinate array of the points in the primary cluster
+            - direction (1 x 3): principal axis as set by the PCA
+            - origin (1 x 3): starting point of the cluster
+
         Returns:
-            -1 if vector and avg xyz_hit vector are in opposite directions and
-            +1 if in the same direction. 0 if they are perpendicular
+            - parity sign
         '''
-        xyz_d = xyz_hit - origin
-        xyz_avg = np.mean(xyz_d, axis=0)
-        dot = np.dot(xyz_avg, vector)
-        if dot > 0:
-            return +1.
-        elif dot < 0:
-            return -1.
-        return 0.
+        centered = coords - origin
+        mean = np.mean(centered, axis=0)
+        dot = np.dot(mean, direction)
+        return np.sign(dot)
 
     @property
     def directions(self):

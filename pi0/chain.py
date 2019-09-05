@@ -1,7 +1,9 @@
 import numpy as np
 import yaml
 from copy import copy
-from .utils import gamma_direction, cone_clusterer, pi0_pi_selection
+from .directions.estimator import DirectionEstimator
+from .cluster.cone_clusterer import ConeClusterer
+from .identification.matcher import Pi0Matcher
 from mlreco.main_funcs import process_config, prepare
 from mlreco.utils import CSVData
 
@@ -23,18 +25,18 @@ class Pi0Chain():
         '''
         # Initialize the data loader
         io_cfg = yaml.load(io_cfg,Loader=yaml.Loader)
-        
+
         # Save config, initialize output
         self.cfg = chain_cfg
         self.verbose = verbose
         self.output = {}
-        
+
         # Initialize log
         log_path = chain_cfg['name']+'_log.csv'
         print('Initialized Pi0 mass chain, log path:', log_path)
         self._log = CSVData(log_path)
         self._keys = ['event_id', 'pion_id', 'pion_mass']
-        
+
         # If a network is specified, initialize the network
         self.network = False
         if chain_cfg['segment'] == 'uresnet' or chain_cfg['shower_start'] == 'ppn':
@@ -43,6 +45,18 @@ class Pi0Chain():
                 net_cfg = yaml.load(cfg_file,Loader=yaml.Loader)
             io_cfg['model'] = net_cfg['model']
             io_cfg['trainval'] = net_cfg['trainval']
+            
+        # If a direction estimator is requested, initialize it
+        if chain_cfg['shower_dir'] != 'truth':
+            self.dir_est = DirectionEstimator()
+            
+        # If a clusterer is requested, initialize it
+        if chain_cfg['shower_energy'] == 'cone':
+            self.clusterer = ConeClusterer()
+            
+        # If a pi0 identifier is requested, initialize it
+        if chain_cfg['shower_match'] == 'proximity':
+            self.matcher = Pi0Matcher()
 
         # Pre-process configuration
         process_config(io_cfg)
@@ -50,10 +64,10 @@ class Pi0Chain():
         # Instantiate "handlers" (IO tools)
         self.hs = prepare(io_cfg)
         self.data_set = iter(self.hs.data_io)
-        
+
     def hs(self):
         return self.hs
-        
+
     def data_set(self):
         return self.data_set
 
@@ -61,14 +75,15 @@ class Pi0Chain():
         self._log.record(self._keys, [eid, pion_id, pion_mass])
         self._log.write()
         self._log.flush()
-        
+
     def run(self):
         '''
         Runs the full Pi0 reconstruction chain, from 3D charge
         information to Pi0 masses for events that contain one
         or more Pi0 decay.
         '''
-        for i in range(len(self.hs.data_io)):
+        n_events = len(self.hs.data_io)
+        for i in range(n_events):
             self.run_loop()
 
     def run_loop(self):
@@ -97,9 +112,9 @@ class Pi0Chain():
         # Reconstruct energy
         self.reconstruct_energy(event)
 
-        # Identify shower starting points
+        # Identify shower starting points, skip if there is less than 2 (no pi0)
         self.find_shower_starts(event)
-        if not len(self.output['showers']):
+        if len(self.output['showers']) < 2:
             if self.verbose:
                 print('No shower start point found in event', event_id)
             return []
@@ -143,10 +158,10 @@ class Pi0Chain():
 
         elif self.cfg['segment'] == 'uresnet':
             # Get the segmentation output of the network
-            res = output['segmentation']
+            res = self.output['forward']['segmentation'][0]
 
             # Argmax to determine most probable label
-            pred_labels = np.argmax(res['segmentation'], axis=1)
+            pred_labels = np.argmax(res, axis=1)
             mask = np.where(pred_labels != 5)
             self.output['charge'] = event['charge'][mask]
             self.output['segment'] = copy(event['segment_label_reco'])
@@ -168,7 +183,7 @@ class Pi0Chain():
             reco = self.cfg['response_cst']*event['charge'][:,4]
             self.output['energy'] = copy(event['charge'])
             self.output['energy'][:,4] = reco
-            
+
         elif self.cfg['response'] == 'full':
             raise NotImplementedError('Proper energy reconstruction not implemented yet')
 
@@ -206,12 +221,20 @@ class Pi0Chain():
                 mom = [part.px(), part.py(), part.pz()]
                 shower.direction = list(np.array(mom)/np.linalg.norm(mom))
 
-        elif self.cfg['shower_dir'] == 'pca':
+        elif self.cfg['shower_dir'] == 'pca' or self.cfg['shower_dir'] == 'cent':
             # Apply DBSCAN, PCA on the touching cluster to get angles
-            points = np.array([s.start+[0.,s.pid]+[0.,0.,0.] for s in self.output['showers']])
-            res, _, _ = gamma_direction.do_calculation(self.output['segment'], points)
+            algo = self.cfg['shower_dir']
+            mask = np.where(self.output['segment'] == 2)[0]
+            points = np.array([s.start for s in self.output['showers']])
+            try:
+                res = self.dir_est.get_directions(self.output['energy'][mask], points, max_distance=10, mode=algo)
+            except AssertionError as err: # Cluster was not found for at least one primary
+                if self.verbose:
+                    print('Error in direction reconstruction:', err)
+                res = [[0., 0., 0.] for _ in range(len(self.output['showers']))]
+                    
             for i, shower in enumerate(self.output['showers']):
-                shower.direction = list(res[i][-3:]/np.linalg.norm(res[i][-3:]))
+                shower.direction = res[i]
 
         else:
             raise ValueError('Shower direction reconstruction method not recognized:', self.cfg['shower_dir'])
@@ -239,16 +262,25 @@ class Pi0Chain():
 
         elif self.cfg['shower_energy'] == 'cone':
             # Fits cones to each shower, adds energies within that cone
-            points = np.array([s.start+[0.,s.pid] for s in self.output['showers']])
-            res = cone_clusterer.find_shower_cone(self.output['dbscan'],
-                self.output['group'], points, self.output['energy'],
-                self.output['segment'])[0] # This returns one array of voxel ids per primary
+            points = np.array([s.start for s in self.output['showers']])
+            dirs = np.array([s.direction for s in self.output['showers']])
+            mask = np.where(self.output['segment'] == 2)[0]
+            try:
+                pred = self.clusterer.fit_predict(self.output['energy'][mask,:3], points, dirs)
+            except (ValueError, AssertionError):
+                for i, shower in enumerate(self.output['showers']):
+                    shower.voxels = []
+                    shower.energy = 0.
+                return
+            padded_pred = np.full(len(self.output['segment']), -1)
+            padded_pred[mask] = pred
             for i, shower in enumerate(self.output['showers']):
-                if not len(res[i]):
+                shower_mask = np.where(padded_pred == i)[0]
+                if not len(shower_mask):
                     shower.energy = 0.
                     continue
-                shower.voxels = res[i]
-                shower.energy = np.sum(self.output['energy'][res[i]][:,4])
+                shower.voxels = shower_mask
+                shower.energy = np.sum(self.output['energy'][shower_mask][:,4])
 
         else:
             raise ValueError('Shower energy reconstruction method not recognized:', self.cfg['shower_energy'])
@@ -278,13 +310,14 @@ class Pi0Chain():
 
         elif self.cfg['shower_match'] == 'proximity':
             # Pair closest shower vectors
-            points = np.array([s.start+[0,s.pid]+s.direction for s in self.output['showers']])
-            event['segment_label'] = self.output['segment']
-            event['group_label'] = self.output['group']
-            res, vertices = pi0_pi_selection.generate_pair_labels(event, points, predict=False)
-            for i, v in enumerate(vertices):
-                self.output['matches'].append([0,1]) # TODO, must ask DHK
-                self.output['vertices'].append(v)
+            points = np.array([s.start for s in self.output['showers']])
+            dirs = np.array([s.direction for s in self.output['showers']])
+            try:
+                self.output['matches'], self.output['vertices'], dists =\
+                    self.matcher.find_matches(points, dirs, self.output['segment'])
+            except ValueError as err:
+                if self.verbose:
+                    print('Error in PID:', err)
 
         else:
             raise ValueError('Shower matching method not recognized:', self.cfg['shower_match'])
@@ -300,14 +333,19 @@ class Pi0Chain():
             e1, e2 = s1.energy, s2.energy
             t1, t2 = s1.direction, s2.direction
             costheta = np.dot(t1, t2)
+            if abs(costheta) > 1.:
+                masses.append(0.)
+                continue
             masses.append(sqrt(2*e1*e2*(1-costheta)))
         return masses
 
     def draw(self):
         from mlreco.visualization import plotly_layout3d
         from mlreco.visualization.voxels import scatter_voxels, scatter_label
-        from plotly.offline import iplot
-        import plotly.graph_objects as go
+        import plotly.plotly as py
+        import plotly.graph_objs as go
+        from plotly.offline import init_notebook_mode, iplot
+        init_notebook_mode(connected=False)
 
         # Create labels for the voxels
         # Use a different color for each cluster
@@ -321,21 +359,22 @@ class Pi0Chain():
         graph_voxels.name = 'Shower ID'
         graph_data = [graph_voxels]
 
-        # Add EM primary points
-        points = np.array([s.start for s in self.output['showers']])
-        graph_start = scatter_voxels(points)[0]
-        graph_start.name = 'Shower starts'
-        graph_data.append(graph_start)
+        if len(self.output['showers']):
+            # Add EM primary points
+            points = np.array([s.start for s in self.output['showers']])
+            graph_start = scatter_voxels(points)[0]
+            graph_start.name = 'Shower starts'
+            graph_data.append(graph_start)
 
-        # Add a vertex if matches, join vertex to start points
-        for i, m in enumerate(self.output['matches']):
-            v = self.output['vertices'][i]
-            s1, s2 = self.output['showers'][m[0]].start, self.output['showers'][m[1]].start
-            points = [v, s1, v, s2]
-            line = scatter_voxels(np.array(points))[0]
-            line.name = 'Pi0 Decay'
-            line.mode = 'lines,markers'
-            graph_data.append(line)
+            # Add a vertex if matches, join vertex to start points
+            for i, m in enumerate(self.output['matches']):
+                v = self.output['vertices'][i]
+                s1, s2 = self.output['showers'][m[0]].start, self.output['showers'][m[1]].start
+                points = [v, s1, v, s2]
+                line = scatter_voxels(np.array(points))[0]
+                line.name = 'Pi0 Decay'
+                line.mode = 'lines,markers'
+                graph_data.append(line)
 
         # Draw
         iplot(go.Figure(data=graph_data,layout=plotly_layout3d()))
@@ -349,11 +388,3 @@ class Pi0Chain():
         if pdg_code == 22 or pdg_code == 11:
             return True
         return False
-    
-    @staticmethod
-    def prepare_network(cfg):
-        '''
-        Initialize a network and returns a forward function
-        '''
-        process_config(yaml.load(cfg, Loader=yaml.Loader))
-        return prepare(cfg).trainer.forward
