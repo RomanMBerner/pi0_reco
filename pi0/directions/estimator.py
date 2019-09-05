@@ -9,13 +9,9 @@ from scipy.spatial.distance import cdist
 
 class FragmentEstimator:
 
-    def __init__(self, eps=2.0, min_samples=5, min_energy=0.05):
+    def __init__(self, eps=6.0, min_samples=5):
         
         self._clusterer = DBSCAN(eps=eps, min_samples=min_samples)
-        self._min_energy = min_energy
-        self._coords = None
-        self._labels = None
-        self._clusts = None
 
 
     def make_shower_frags(self, shower_energy):
@@ -33,11 +29,9 @@ class FragmentEstimator:
             - frag_labels: labels assigned by DBSCAN clustering.
             - mask: energy thresholding mask. 
         """
-        mask = shower_energy[:, -1] > self._min_energy
-        coords = shower_energy[:, :3][mask]
+        coords = shower_energy[:, :3]
         frag_labels = self._clusterer.fit_predict(coords)
-        self._frag_labels = frag_labels
-        return frag_labels, mask
+        return frag_labels
 
 
     def find_cluster_indices(self, coords, labels, frags):
@@ -59,19 +53,14 @@ class FragmentEstimator:
         for c in frags:
             if c == -1: continue
             selected = coords[labels == c]
-            ind = np.where(labels == c)
-            centroid = np.mean(selected, axis=0)
-            centroids.append(centroid)
+            ind = np.where(labels == c)[0]
             clusts.append(ind)
-        centroids = np.asarray(centroids)
-        self._centroids = centroids
         #if len(clusts) == 0 and centroids.shape[0] == 0:
         #    print("No fragments were found for the supplied DBSCAN parameters")
         return clusts
 
 
-    def assign_frags_to_primary(self, shower_energy, primaries, 
-                                max_distance=float('inf')):
+    def assign_frags_to_primary(self, shower_energy, primaries):
         """
         Inputs:
             - shower_energy (np.ndarray): energy depo array for SHOWERS ONLY
@@ -82,22 +71,13 @@ class FragmentEstimator:
         Returns:
             None (updates FragmentEstimator properties in-place)
         """
-        labels, mask = self.make_shower_frags(shower_energy)
-        coords = shower_energy[mask][:, :3]
-        energies = shower_energy[mask][:, -1]
-        #clusts = self.find_centroids_and_clusters(coords, labels)
+        labels = self.make_shower_frags(shower_energy)
+        coords = shower_energy[:, :3]
         Y = cdist(coords, primaries[:, :3])
         min_dists, ind = np.min(Y, axis=1), np.argmin(Y, axis=0)
         frags = labels[ind]
-        fragment_mask = np.isin(labels, frags)
-        distance_mask = min_dists < max_distance
-        mask2 = np.logical_and(fragment_mask, distance_mask)
-        self._voxel_weights = energies[mask2]
-        clusts = self.find_cluster_indices(coords[mask2], labels[mask2], frags)
-        self._coords = coords[mask2]
-        self._labels = labels[mask2]
-        self._clusts = clusts
-        self._primaries = primaries
+        clusts = self.find_cluster_indices(coords, labels, frags)
+        return clusts
 
     @property
     def coords(self):
@@ -120,34 +100,31 @@ class FragmentEstimator:
         return self._voxel_weights
 
 
-class DirectionEstimator(FragmentEstimator):
+class DirectionEstimator():
 
-    def __init__(self, eps=2, min_samples=5, min_energy=0.):
-        super().__init__(eps=eps, min_samples=min_samples, min_energy=min_energy)
+    def __init__(self):
         self._directions = None
 
-    def get_directions(self, shower_energy, primaries, 
+    def get_directions(self, shower_energy, primaries, fragments,
                        max_distance=float('inf'), mode='pca', normalize=True, weighted=False):
         """
         Given data (see FragmentEstimator docstring), return estimated 
         unit direction vectors for each primary. 
         """
-        self.assign_frags_to_primary(shower_energy, primaries, max_distance=max_distance)
         directions = []
-        if len(self.clusts) != len(primaries):
-            raise AssertionError("FragmentEstimator did not find a fragment for each primary")
-        for i, p in enumerate(self.primaries[:, :3]):
+        for i, p in enumerate(primaries[:, :3]):
             origin = p[:3]
-            indices = self.clusts[i]
+            indices = fragments[i]
+            coords = shower_energy[indices, :3]
             if mode == 'pca':
-                direction = self.pca_estimate(self.coords[indices])
-                parity = self.compute_parity_flip(self.coords[indices], direction, origin)
+                direction = self.pca_estimate(coords)
+                parity = self.compute_parity_flip(coords, direction, origin)
                 direction *= parity
             elif mode == 'cent':
                 weights = None
                 if weighted:
-                    weights = shower_energy[:,-4][indices]
-                direction = self.centroid_estimate(self.coords[indices], p, weights)
+                    weights = shower_energy[indices, -1]
+                direction = self.centroid_estimate(coords, p, weights)
             else:
                 raise ValueError('Invalid Direction Estimation Mode')
             directions.append(direction)
