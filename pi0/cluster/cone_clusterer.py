@@ -176,7 +176,9 @@ class ConeClusterer:
         Inputs:
             - shower_energy (np.ndarray): N x 5 array, where first three are spatial
             coordinates and last column gives the energy depositions.
-            - primaries (np.ndarray): N_p x 3 array of em primary vertices. 
+            - primaries (np.ndarray): N_p x 3 array of em primary vertices.
+            - fragments (list of np.ndarray): fragment indices from FragmentEstimator
+            - directions (np.ndarray): estimated direction vectors from DirectionEstimator. 
 
         Returns:
             - pred (np.ndarray): (N, ) array of predicted cluster labels. 
