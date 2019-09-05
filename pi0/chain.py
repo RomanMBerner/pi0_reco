@@ -298,7 +298,7 @@ class Pi0Chain():
             dirs = np.array([s.direction for s in self.output['showers']])
             mask = np.where(self.output['segment'][:,-1] == 2)[0]
             try:
-                pred = self.clusterer.fit_predict(self.output['energy'][mask,:3], points, dirs)
+                pred = self.clusterer.fit_predict(self.output['energy'][mask,:3], points, self.output['fragments'], dirs)
             except (ValueError, AssertionError):
                 for i, shower in enumerate(self.output['showers']):
                     shower.voxels = []
