@@ -168,11 +168,12 @@ class Pi0Chain():
 
         elif self.cfg['segment'] == 'uresnet':
             # Get the segmentation output of the network
-            res = self.output['forward']['segmentation'][0]
+            res = self.output['forward']
 
             # Argmax to determine most probable label
-            pred_labels = np.argmax(res, axis=1)
-            mask = np.where(pred_labels != 5)[0]
+            pred_ghost = np.argmax(res['ghost'][0], axis=1)
+            pred_labels = np.argmax(res['segmentation'][0], axis=1)
+            mask = np.where(pred_ghost == 0)[0]
             self.output['charge'] = event['charge'][mask]
             self.output['segment'] = copy(event['segment_label_reco'])
             self.output['segment'][:,-1] = pred_labels
