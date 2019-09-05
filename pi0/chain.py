@@ -1,7 +1,7 @@
 import numpy as np
 import yaml
 from copy import copy
-from .directions.estimator import DirectionEstimator
+from .directions.estimator import FragmentEstimator, DirectionEstimator
 from .cluster.cone_clusterer import ConeClusterer
 from .identification.matcher import Pi0Matcher
 from mlreco.main_funcs import process_config, prepare
@@ -45,6 +45,9 @@ class Pi0Chain():
                 net_cfg = yaml.load(cfg_file,Loader=yaml.Loader)
             io_cfg['model'] = net_cfg['model']
             io_cfg['trainval'] = net_cfg['trainval']
+            
+        # Initialize the fragment identifier
+        self.frag_est = FragmentEstimator()
             
         # If a direction estimator is requested, initialize it
         if chain_cfg['shower_dir'] != 'truth':
@@ -105,7 +108,7 @@ class Pi0Chain():
                 if key != 'particles':
                     event[key] = event[key][0]
             event_id = event['index']
-        
+
         # Filter out ghosts
         self.filter_ghosts(event)
 
@@ -118,6 +121,14 @@ class Pi0Chain():
             if self.verbose:
                 print('No shower start point found in event', event_id)
             return []
+        
+        # Match primary shower fragments with each start points
+        if self.cfg['shower_dir'] != 'truth' or self.cfg['shower_energy'] == 'cone':
+            self.match_primary_fragments(event)
+            if not len(self.output['fragments']):
+                if self.verbose:
+                    print('Could not find a fragment for each start point in event', event_id)
+                return []
 
         # Reconstruct shower direction vectors
         self.reconstruct_shower_directions(event)
@@ -149,11 +160,10 @@ class Pi0Chain():
             self.output['dbscan'] = event['dbscan_label_true']
 
         elif self.cfg['segment'] == 'mask':
-            self.output['segment'] = event['segment_label_reco']
-            
-            mask = np.where(self.output['segment'][:,4] != 5)
+            mask = np.where(event['segment_label_reco'][:,-1] != 5)[0]
             self.output['charge'] = event['charge'][mask]
-            self.output['group'] = event['group_label_reco']
+            self.output['segment'] = event['segment_label_reco'][mask]
+            self.output['group'] = event['group_label_reco'] # group_label_reco is wrong, so no masking, TODO
             self.output['dbscan'] = event['dbscan_label_reco'][mask]
 
         elif self.cfg['segment'] == 'uresnet':
@@ -162,11 +172,12 @@ class Pi0Chain():
 
             # Argmax to determine most probable label
             pred_labels = np.argmax(res, axis=1)
-            mask = np.where(pred_labels != 5)
+            mask = np.where(pred_labels != 5)[0]
             self.output['charge'] = event['charge'][mask]
             self.output['segment'] = copy(event['segment_label_reco'])
-            self.output['segment'][:,4] = pred_labels
-            self.output['group'] = event['group_label_reco']
+            self.output['segment'][:,-1] = pred_labels
+            self.output['segment'] = self.output['segment'][mask]
+            self.output['group'] = event['group_label_reco'] # group_label_reco is wrong, so no masking, TODO
             self.output['dbscan'] = event['dbscan_label_reco'][mask]
 
         else:
@@ -180,9 +191,9 @@ class Pi0Chain():
             self.output['energy'] = event['energy']
 
         elif self.cfg['response'] == 'constant':
-            reco = self.cfg['response_cst']*event['charge'][:,4]
-            self.output['energy'] = copy(event['charge'])
-            self.output['energy'][:,4] = reco
+            reco = self.cfg['response_cst']*self.output['charge'][:,-1]
+            self.output['energy'] = copy(self.output['charge'])
+            self.output['energy'][:,-1] = reco
 
         elif self.cfg['response'] == 'full':
             raise NotImplementedError('Proper energy reconstruction not implemented yet')
@@ -210,6 +221,26 @@ class Pi0Chain():
 
         else:
             raise ValueError('EM shower primary identifiation method not recognized:', self.cfg['shower_start'])
+            
+    def match_primary_fragments(self, event):
+        '''
+        For each shower start point, find the closest DBSCAN shower cluster
+        '''
+        # Mask out points that are not showers
+        shower_mask = np.where(self.output['segment'][:,-1] == 2)[0]
+        if not len(shower_mask):
+            self.output['fragments'] = []
+            return
+        
+        # Assign clusters
+        points = np.array([s.start for s in self.output['showers']])
+        clusts = self.frag_est.assign_frags_to_primary(self.output['energy'][shower_mask], points)
+        if len(clusts) != len(points):
+            self.output['fragments'] = []
+            return
+        
+        # Return list of voxel indices for each cluster
+        self.output['fragments'] = clusts
 
     def reconstruct_shower_directions(self, event):
         '''
@@ -224,10 +255,11 @@ class Pi0Chain():
         elif self.cfg['shower_dir'] == 'pca' or self.cfg['shower_dir'] == 'cent':
             # Apply DBSCAN, PCA on the touching cluster to get angles
             algo = self.cfg['shower_dir']
-            mask = np.where(self.output['segment'] == 2)[0]
+            mask = np.where(self.output['segment'][:,-1] == 2)[0]
             points = np.array([s.start for s in self.output['showers']])
             try:
-                res = self.dir_est.get_directions(self.output['energy'][mask], points, max_distance=10, mode=algo)
+                res = self.dir_est.get_directions(self.output['energy'][mask], 
+                    points, self.output['fragments'], max_distance=float('inf'), mode=algo)
             except AssertionError as err: # Cluster was not found for at least one primary
                 if self.verbose:
                     print('Error in direction reconstruction:', err)
@@ -264,7 +296,7 @@ class Pi0Chain():
             # Fits cones to each shower, adds energies within that cone
             points = np.array([s.start for s in self.output['showers']])
             dirs = np.array([s.direction for s in self.output['showers']])
-            mask = np.where(self.output['segment'] == 2)[0]
+            mask = np.where(self.output['segment'][:,-1] == 2)[0]
             try:
                 pred = self.clusterer.fit_predict(self.output['energy'][mask,:3], points, dirs)
             except (ValueError, AssertionError):
@@ -280,7 +312,7 @@ class Pi0Chain():
                     shower.energy = 0.
                     continue
                 shower.voxels = shower_mask
-                shower.energy = np.sum(self.output['energy'][shower_mask][:,4])
+                shower.energy = np.sum(self.output['energy'][shower_mask][:,-1])
 
         else:
             raise ValueError('Shower energy reconstruction method not recognized:', self.cfg['shower_energy'])
@@ -349,7 +381,7 @@ class Pi0Chain():
 
         # Create labels for the voxels
         # Use a different color for each cluster
-        labels = np.full(len(self.output['energy'][:,4]), -1)
+        labels = np.full(len(self.output['energy'][:,-1]), -1)
         for i, s in enumerate(self.output['showers']):
             labels[s.voxels] = i
 
