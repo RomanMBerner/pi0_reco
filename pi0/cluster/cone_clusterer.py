@@ -59,7 +59,7 @@ class Cone:
         mask = np.logical_and(mask, pars < self.height)
         return mask
     
-    def get_scores(self, points, norm=2):
+    def get_scores(self, points, norm=2, scale_embedding=1.0):
         """
         Given N x 3 array of three-dimensional points, calculates the 
         embedding space distance score for clustering. 
@@ -71,9 +71,9 @@ class Cone:
         Returns:
             - scores (N x 1 array): euclidean distance in (r,t) space,
             (see Cone::transform).
-        NOTE: we assign -1 score to reject tachyons. 
         """
         embedding = self.transform(points)
+        points[:, 0] *= scale_embedding
         scores = np.linalg.norm(embedding, axis=1, ord=norm)
         return scores
 
@@ -96,8 +96,6 @@ class Cone:
         perps = np.linalg.norm(np.cross(points - self.vertex, self.direction), axis=1)
         cos = pars / (np.linalg.norm(points - self.vertex, axis=1) * np.linalg.norm(self.direction))
         angles = np.arccos(cos)
-        # slopes = perps / pars
-        # angles = np.arctan(slopes) / self.angle
         embedding = np.hstack((r.reshape(r.shape[0], 1), angles.reshape(angles.shape[0], 1)))
         return embedding
 
@@ -130,9 +128,11 @@ class ConeClusterer:
             - params (dict): list of parameters specific to cone clustering. 
         """
         self._cones = []
+        # Used only for 'contain' mode.
         self.scale_height = params.get('scale_height', 14.107334041)
         self.scale_slope = params.get('scale_slope', 5.86322059)
-        self.slope_percentile = params.get('slope_percentile', 53.0)
+        # Used only for 'score' mode (default). 
+        self.scale_embedding = params.get('scale_embedding', 1.0)
         self.predict_mode = params.get('predict_mode', 'score')
 
     def make_cone(self, coords, vertex, direction, name='None'):
@@ -148,31 +148,27 @@ class ConeClusterer:
         Returns:
             - cone (Cone Object): Cone object with the specified parameters. 
         """
-        axis = np.mean(coords - vertex, axis=0) * self.scale_height
-        height = np.linalg.norm(axis)
-        pars = np.dot(coords - vertex, direction)
-        perps = np.linalg.norm(np.cross(coords - vertex, direction), axis=1)
-        slopes = perps / pars
-        mask = np.where(slopes > 0)[0]
-        if not len(mask):
-            raise ValueError
-        slope = np.percentile(slopes[slopes > 0], self.slope_percentile)
+        
+        cent = np.mean(coords, axis=0)
+        #axis = np.mean(coords - vertex, axis=0) * self.scale_height
+        height = np.linalg.norm(cent - vertex) * self.scale_height
+        cos = np.dot(coords - vertex, direction) / (np.linalg.norm(coords, axis=1) * np.linalg.norm(direction))
+        angle = np.median(np.arccos(cos))
+        slope = np.tan(angle)
         cone = Cone(vertex[:3], direction, height, slope * self.scale_slope, name=name)
         return cone
 
-    def fit_cones(self, shower_energy, primaries, directions):
+    def fit_cones(self, shower_energy, primaries, fragments, directions):
         self._cones = []
-        frag_est = FragmentEstimator()
-        frag_est.assign_frags_to_primary(shower_energy, primaries)
-        if len(frag_est.clusts) != len(primaries):
+        if len(fragments) != len(primaries):
             raise AssertionError("FragmentEstimator did not find a fragment for each primary")
         for i, p in enumerate(primaries):
             vertex, direction = p[:3], directions[i]
-            ind = frag_est.clusts[i]
-            cone = self.make_cone(frag_est.coords[ind], vertex, directions[i])
+            ind = fragments[i]
+            cone = self.make_cone(shower_energy[:, :3][ind], vertex, directions[i])
             self._cones.append(cone)
 
-    def fit_predict(self, shower_energy, primaries, directions):
+    def fit_predict(self, shower_energy, primaries, fragments, directions):
         """
         For given N x 5 array of shower coordinate and energy depositions, run
         cone-clustering with the fitted cones.
@@ -193,7 +189,7 @@ class ConeClusterer:
         backwards in time to lie within any cone. 
 
         """
-        self.fit_cones(shower_energy, primaries, directions)
+        self.fit_cones(shower_energy, primaries, fragments, directions)
         if self.predict_mode == 'contain':
             pred = -np.ones((shower_energy.shape[0], ))
             for i, cone in enumerate(self._cones):
@@ -211,9 +207,6 @@ class ConeClusterer:
             return pred
         else:
             raise ValueError('Invalid Cone Prediction Mode: {}'.format(self.predict_mode))
-
-    def adjust_cones(self, params):
-        pass
 
     @property
     def cones(self):

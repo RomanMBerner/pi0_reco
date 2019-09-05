@@ -52,11 +52,8 @@ class FragmentEstimator:
         clusts = []
         for c in frags:
             if c == -1: continue
-            selected = coords[labels == c]
             ind = np.where(labels == c)[0]
             clusts.append(ind)
-        #if len(clusts) == 0 and centroids.shape[0] == 0:
-        #    print("No fragments were found for the supplied DBSCAN parameters")
         return clusts
 
 
@@ -73,11 +70,19 @@ class FragmentEstimator:
         """
         labels = self.make_shower_frags(shower_energy)
         coords = shower_energy[:, :3]
+        self._coords = coords
         Y = cdist(coords, primaries[:, :3])
         min_dists, ind = np.min(Y, axis=1), np.argmin(Y, axis=0)
         frags = labels[ind]
         clusts = self.find_cluster_indices(coords, labels, frags)
+        self._clusts = clusts
         return clusts
+
+    def set_labels(self):
+        labels = -np.ones((self.coords.shape[0], ))
+        for i, ind in  enumerate(self.clusts):
+            labels[ind] = i
+        self._labels = labels
 
     @property
     def coords(self):
@@ -110,6 +115,16 @@ class DirectionEstimator():
         """
         Given data (see FragmentEstimator docstring), return estimated 
         unit direction vectors for each primary. 
+
+        Inputs:
+            - shower_energy (np.ndarray): N x 5 shower energy depositions
+            - primaries (np.ndarray): N x 3 em primary coordinates
+            - fragments (list of np.ndarray): fragments[i] is a array of primary fragment
+            indices for the i-th primary. 
+            - max_distance: maximum distance cut for primary fragment
+            - mode: method for estimating direction, choose 'pca' or 'cent'
+            - normalize: True returns unit direction vectors. 
+            - weighted: If True, computes the weighted centroid. 
         """
         directions = []
         for i, p in enumerate(primaries[:, :3]):
