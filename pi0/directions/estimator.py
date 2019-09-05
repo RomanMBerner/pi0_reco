@@ -1,10 +1,4 @@
 import numpy as np
-from mlreco.utils.gnn.cluster import form_clusters_new
-from mlreco.utils.gnn.compton import filter_compton
-from mlreco.visualization.voxels import scatter_label
-from mlreco.utils.gnn.primary import assign_primaries_unique
-from mlreco.utils import metrics
-
 from sklearn.cluster import DBSCAN
 from sklearn.decomposition import PCA
 from scipy.spatial.distance import cdist
@@ -76,12 +70,11 @@ class FragmentEstimator:
         return clusts
 
 
-    def assign_frags_to_primary(self, shower_energy, shower_segment_label, primaries, 
+    def assign_frags_to_primary(self, shower_energy, primaries, 
                                 max_distance=float('inf')):
         """
         Inputs:
             - shower_energy (np.ndarray): energy depo array for SHOWERS ONLY
-            - shower_segment_label (np.ndarray): segment_labels for SHOWERS ONLY
             - primaries (np.ndarray): primaries information from parse_em_primaries
             - max_distance (float): do not include voxels in fragments if distance from
             primary is larger than max_distance. 
@@ -133,14 +126,13 @@ class DirectionEstimator(FragmentEstimator):
         super().__init__(eps=eps, min_samples=min_samples, min_energy=min_energy)
         self._directions = None
 
-    def get_directions(self, shower_energy, shower_segment_label, primaries, 
-                       max_distance=float('inf'), mode='pca'):
+    def get_directions(self, shower_energy, primaries, 
+                       max_distance=float('inf'), mode='pca', normalize=True, weights=None):
         """
         Given data (see FragmentEstimator docstring), return estimated 
         unit direction vectors for each primary. 
         """
-        self.assign_frags_to_primary(shower_energy, shower_segment_label, 
-                                     primaries, max_distance=max_distance)
+        self.assign_frags_to_primary(shower_energy, primaries, max_distance=max_distance)
         directions = []
         if len(self.clusts) != len(primaries):
             raise AssertionError("FragmentEstimator did not find a fragment for each primary")
@@ -152,14 +144,15 @@ class DirectionEstimator(FragmentEstimator):
                 parity = self.compute_parity_flip(self.coords[indices], direction, origin)
                 direction *= parity
             elif mode == 'cent':
-                weights = self.voxel_weights[indices]
-                direction = self.centroid_estimate(self.coords[indices], p)
+                direction = self.centroid_estimate(self.coords[indices], p, weights=weights)
             else:
                 raise ValueError('Invalid Direction Estimation Mode')
             directions.append(direction)
         directions = np.asarray(directions)
-        directions = directions / np.linalg.norm(directions, axis=1).reshape(
-            directions.shape[0], 1)
+        if normalize:
+            directions = directions / np.linalg.norm(directions, axis=1).reshape(
+                directions.shape[0], 1)
+        self._directions = directions
         return directions
 
     def centroid_estimate(self, coords, primary, weights=None):
@@ -188,3 +181,7 @@ class DirectionEstimator(FragmentEstimator):
         mean = np.mean(centered, axis=0)
         dot = np.dot(mean, direction)
         return np.sign(dot)
+
+    @property
+    def directions(self):
+        return self._directions
