@@ -369,6 +369,7 @@ class Pi0Chain():
                 masses.append(0.)
                 continue
             masses.append(sqrt(2*e1*e2*(1-costheta)))
+        self.output['masses'] = masses
         return masses
 
     def draw(self):
