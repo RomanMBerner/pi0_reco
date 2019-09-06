@@ -399,6 +399,14 @@ class Pi0Chain():
             graph_start = scatter_voxels(points)[0]
             graph_start.name = 'Shower starts'
             graph_data.append(graph_start)
+            
+            # Add EM primary directions
+            dirs = np.array([s.direction for s in self.output['showers']])
+            arrows = go.Cone(x=points[:,0], y=points[:,1], z=points[:,2], 
+                             u=dirs[:,0], v=dirs[:,1], w=dirs[:,2],
+                             sizemode='absolute', sizeref=0.25, anchor='tail',
+                             showscale=False, opacity=0.4)
+            graph_data.append(arrows)
 
             # Add a vertex if matches, join vertex to start points
             for i, m in enumerate(self.output['matches']):
