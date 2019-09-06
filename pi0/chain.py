@@ -29,6 +29,7 @@ class Pi0Chain():
         # Save config, initialize output
         self.cfg = chain_cfg
         self.verbose = verbose
+        self.event = None
         self.output = {}
 
         # Initialize log
@@ -108,6 +109,8 @@ class Pi0Chain():
                 if key != 'particles':
                     event[key] = event[key][0]
             event_id = event['index']
+
+        self.event = event
 
         # Filter out ghosts
         self.filter_ghosts(event)
@@ -195,6 +198,10 @@ class Pi0Chain():
             reco = self.cfg['response_cst']*self.output['charge'][:,-1]
             self.output['energy'] = copy(self.output['charge'])
             self.output['energy'][:,-1] = reco
+
+        elif self.cfg['response'] == 'average':
+            self.output['energy'] = copy(self.output['charge'])
+            self.output['energy'][:,-1] = self.cfg['response_average']
 
         elif self.cfg['response'] == 'full':
             raise NotImplementedError('Proper energy reconstruction not implemented yet')
