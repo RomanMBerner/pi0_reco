@@ -95,7 +95,7 @@ class Cone:
         pars = np.dot(points - self.vertex, self.direction)
         perps = np.linalg.norm(np.cross(points - self.vertex, self.direction), axis=1)
         cos = pars / (np.linalg.norm(points - self.vertex, axis=1) * np.linalg.norm(self.direction))
-        angles = np.arccos(cos)
+        angles = np.arccos(np.maximum(-1., np.minimum(1., cos)))
         embedding = np.hstack((r.reshape(r.shape[0], 1), angles.reshape(angles.shape[0], 1)))
         return embedding
 

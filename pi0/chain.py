@@ -367,6 +367,9 @@ class Pi0Chain():
                         new_dir = np.array(points[j]) - v
                         self.output['showers'][j].direction = new_dir/np.linalg.norm(new_dir)
 
+            if self.cfg['shower_energy'] == 'cone' and self.cfg['refit_cone']:
+                self.reconstruct_shower_energy(event)
+
         else:
             raise ValueError('Shower matching method not recognized:', self.cfg['shower_match'])
 
