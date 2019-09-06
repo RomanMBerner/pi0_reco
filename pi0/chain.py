@@ -358,6 +358,14 @@ class Pi0Chain():
             except ValueError as err:
                 if self.verbose:
                     print('Error in PID:', err)
+                return
+
+            if self.cfg['refit_dir']:
+                for i, m in enumerate(self.output['matches']):
+                    v = np.array(self.output['vertices'][i])
+                    for j in m:
+                        new_dir = np.array(points[j]) - v
+                        self.output['showers'][j].direction = new_dir/np.linalg.norm(new_dir)
 
         else:
             raise ValueError('Shower matching method not recognized:', self.cfg['shower_match'])
