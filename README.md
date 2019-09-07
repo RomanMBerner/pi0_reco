@@ -15,4 +15,3 @@ General Contribution Rules:
 3. __No Jupyter Notebooks!__
 4. Make sure temporary/generated files are in `.gitignore` and not committed.
 5. Please comment your code and put a docstring at the head of functions. 
-
