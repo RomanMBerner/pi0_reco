@@ -6,7 +6,6 @@ import importlib
 
 # We will use Plotly for plotting 3D event displays
 import plotly.graph_objs as go
-from plotly.offline import download_plotlyjs, plot, iplot
 
 from mlreco.visualization import voxels
 

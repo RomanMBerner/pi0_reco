@@ -391,13 +391,22 @@ class Pi0Chain():
         self.output['masses'] = masses
         return masses
 
-    def draw(self):
+    def draw(self, draw_input=False):
         from mlreco.visualization import plotly_layout3d
         from mlreco.visualization.voxels import scatter_voxels, scatter_label
         import plotly.plotly as py
         import plotly.graph_objs as go
         from plotly.offline import init_notebook_mode, iplot
         init_notebook_mode(connected=False)
+        
+        # If requested, draw the input of the chain
+        if draw_input:
+            if self.cfg['input'] == 'energy':
+                graph_input = scatter_label(self.event['energy'], self.event['energy'][:,-1], 2)
+            else:
+                graph_input = scatter_label(self.event['charge'], self.event['charge'][:,-1], 2)
+
+            iplot(go.Figure(data=graph_input, layout=plotly_layout3d()))
 
         # Create labels for the voxels
         # Use a different color for each cluster
