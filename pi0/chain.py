@@ -394,11 +394,9 @@ class Pi0Chain():
     def draw(self, draw_input=False):
         from mlreco.visualization import plotly_layout3d
         from mlreco.visualization.voxels import scatter_voxels, scatter_label
-        import plotly.plotly as py
         import plotly.graph_objs as go
-        from plotly.offline import init_notebook_mode, iplot
-        init_notebook_mode(connected=False)
-        
+        from plotly.offline import iplot
+
         # If requested, draw the input of the chain
         if draw_input:
             if self.cfg['input'] == 'energy':
