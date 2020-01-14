@@ -6,6 +6,7 @@ from .cluster.cone_clusterer import ConeClusterer
 from .identification.matcher import Pi0Matcher
 from mlreco.main_funcs import process_config, prepare
 from mlreco.utils import CSVData
+from mlreco.utils.ppn import uresnet_ppn_type_point_selector
 
 # Class that contains all the shower information
 class Shower():
@@ -225,7 +226,13 @@ class Pi0Chain():
                     self.output['showers'].append(new_shower)
 
         elif self.cfg['shower_start'] == 'ppn':
-            raise NotImplementedError('PPN not implemented yet')
+            # Parse the PPN output as a list of points, select EM point only
+            ppn = uresnet_ppn_type_point_selector(self.event['input_data'], self.output['forward'], entry=0, score_threshold=0.5, type_threshold=5, eps=4.99)
+            self.output['showers'] = []
+            for i, p in enumerate(ppn):
+                if p[-1] == 2:
+                    new_shower = Shower(start=p[:3], pid=i)
+                    self.output['showers'].append(new_shower)
 
         else:
             raise ValueError('EM shower primary identifiation method not recognized:', self.cfg['shower_start'])
