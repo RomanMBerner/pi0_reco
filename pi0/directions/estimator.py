@@ -10,7 +10,7 @@ from scipy.spatial.distance import cdist
 class FragmentEstimator:
 
     def __init__(self, eps=6.0, min_samples=5):
-        
+
         self._clusterer = DBSCAN(eps=eps, min_samples=min_samples)
 
 
@@ -18,16 +18,16 @@ class FragmentEstimator:
         """
         Cluster showers for initial identification of shower stem using DBSCAN.
 
-        NOTE: Batch size should be one. 
+        NOTE: Batch size should be one.
 
-        Inputs: 
-            - shower_energy (N x 5 array): energy deposition array where 
+        Inputs:
+            - shower_energy (N x 5 array): energy deposition array where
             the first three coordinates give the spatial indices and the last
-            column gives the energy depositions. 
+            column gives the energy depositions.
 
         Returns:
             - frag_labels: labels assigned by DBSCAN clustering.
-            - mask: energy thresholding mask. 
+            - mask: energy thresholding mask.
         """
         coords = shower_energy[:, :3]
         frag_labels = self._clusterer.fit_predict(coords)
@@ -36,17 +36,17 @@ class FragmentEstimator:
 
     def find_cluster_indices(self, coords, labels, frags):
         """
-        Find the index labels for each fragment assigned to a primary. 
+        Find the index labels for each fragment assigned to a primary.
 
         Inputs:
             - coords (N x 3): spatial coordinate array
             - labels (N x 1): fragment labels
-            - frags: the fragment label associated to the ith em primary. 
+            - frags: the fragment label associated to the ith em primary.
 
         Returns:
-            - clusts (list of arrays): list of variable length arrays where 
+            - clusts (list of arrays): list of variable length arrays where
             the ith array contains the index location of the fragment assigned to
-            the ith primary. 
+            the ith primary.
         """
         centroids = []
         clusts = []
@@ -63,7 +63,7 @@ class FragmentEstimator:
             - shower_energy (np.ndarray): energy depo array for SHOWERS ONLY
             - primaries (np.ndarray): primaries information from parse_em_primaries
             - max_distance (float): do not include voxels in fragments if distance from
-            primary is larger than max_distance. 
+            primary is larger than max_distance.
 
         Returns:
             None (updates FragmentEstimator properties in-place)
@@ -110,27 +110,25 @@ class DirectionEstimator():
     def __init__(self):
         self._directions = None
 
-    def get_directions(self, shower_energy, primaries, fragments,
+    def get_directions(self, primaries, fragments,
                        max_distance=float('inf'), mode='pca', normalize=True, weighted=False):
         """
-        Given data (see FragmentEstimator docstring), return estimated 
-        unit direction vectors for each primary. 
+        Given data (see FragmentEstimator docstring), return estimated
+        unit direction vectors for each primary.
 
         Inputs:
-            - shower_energy (np.ndarray): N x 5 shower energy depositions
             - primaries (np.ndarray): N x 3 em primary coordinates
-            - fragments (list of np.ndarray): fragments[i] is a array of primary fragment
-            indices for the i-th primary. 
+            - fragments (list of np.ndarray): fragments[i] is (N,3+M+1) shower energy depositions (x,y,z,...,E)
+            indices for the i-th primary.
             - max_distance: maximum distance cut for primary fragment
             - mode: method for estimating direction, choose 'pca' or 'cent'
-            - normalize: True returns unit direction vectors. 
-            - weighted: If True, computes the weighted centroid. 
+            - normalize: True returns unit direction vectors.
+            - weighted: If True, computes the weighted centroid.
         """
         directions = []
         for i, p in enumerate(primaries[:, :3]):
             origin = p[:3]
-            indices = fragments[i]
-            coords = shower_energy[indices, :3]
+            coords = fragments[i][:,:3]
             if max_distance < float('inf'):
                 minid = np.argmin(cdist(coords, [origin]).flatten())
                 dists = cdist(coords, [coords[minid]]).flatten()
@@ -143,7 +141,7 @@ class DirectionEstimator():
             elif mode == 'cent':
                 weights = None
                 if weighted:
-                    weights = shower_energy[indices, -1]
+                    weights = fragments[:, -1]
                 direction = self.centroid_estimate(coords, origin, weights)
             else:
                 raise ValueError('Invalid Direction Estimation Mode')
@@ -166,9 +164,9 @@ class DirectionEstimator():
 
     def compute_parity_flip(self, coords, direction, origin):
         '''
-        Uses the dot product of the average vector and the specified 
+        Uses the dot product of the average vector and the specified
         vector to determine if vector in same, opposite, or parallel to most hits
-        
+
         Inputs:
             - coords (N x 3): spatial coordinate array of the points in the primary cluster
             - direction (1 x 3): principal axis as set by the PCA

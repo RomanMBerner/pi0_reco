@@ -5,7 +5,7 @@ class _Angle:
     """
     Angle and slope are dependent attributes, so we define a descriptor.
     This way slope and angle are properly linked, i.e., changing one of them
-    will change the value of another consistently. 
+    will change the value of another consistently.
     """
     def __get__(self, instance, owner):
         return np.arctan(instance.slope)
@@ -14,21 +14,21 @@ class _Angle:
 
 class Cone:
     """
-    Wrapper class for cone objects. 
+    Wrapper class for cone objects.
     """
     angle = _Angle()
 
     def __init__(self, vertex, direction, height, slope, name=None):
         """
         Initialize Cone, using vertex, direction (unit vector), height and slope.
-        
-        NOTE: The direction must point AWAY from the vertex. 
+
+        NOTE: The direction must point AWAY from the vertex.
 
         Inputs:
             - vertex: (3, ) array
             - direction: (3, ) array
             - height: float number
-            - slope: float number 
+            - slope: float number
         """
         self.vertex = vertex
         self.direction = direction
@@ -38,7 +38,7 @@ class Cone:
             self.name = name
         else:
             self.name = ''
-    
+
     def contains(self, points):
         """
         Given N x 3 array of three-dimensional points, determines if a each point
@@ -46,7 +46,7 @@ class Cone:
 
         Inputs:
             - points (N x 3 array): 3d coordinates
-        
+
         Returns:
             - mask (N x 1 array): Truth if given point is inside the cone.
         """
@@ -58,16 +58,16 @@ class Cone:
         mask = np.logical_and(perps < cone_radii, pars > 0)
         mask = np.logical_and(mask, pars < self.height)
         return mask
-    
+
     def get_scores(self, points, norm=2, scale_embedding=1.0):
         """
-        Given N x 3 array of three-dimensional points, calculates the 
-        embedding space distance score for clustering. 
+        Given N x 3 array of three-dimensional points, calculates the
+        embedding space distance score for clustering.
 
         Inputs:
             - points (N x 3 array): 3d coordinates
             - norm: p for the p-norm to be used in embedding space metric calculation.
-        
+
         Returns:
             - scores (N x 1 array): euclidean distance in (r,t) space,
             (see Cone::transform).
@@ -83,13 +83,13 @@ class Cone:
         transform spatial coordinate to (r,t) space where:
             - r: dist(vertex, point) / cone_height.
             - t: angle(cone_axis, point) / cone_angle.
-        
+
         Inputs:
             - coords (np.ndarray): N x 3 spatial coordinate array.
             - cone (Cone): Cone object
 
         Returns:
-            - embedding (np.ndarray): N x 2 (r,t) coordinate array. 
+            - embedding (np.ndarray): N x 2 (r,t) coordinate array.
         """
         r = np.linalg.norm(points - self.vertex, axis=1) / self.height
         pars = np.dot(points - self.vertex, self.direction)
@@ -125,13 +125,13 @@ class ConeClusterer:
 
         Inputs:
 
-            - params (dict): list of parameters specific to cone clustering. 
+            - params (dict): list of parameters specific to cone clustering.
         """
         self._cones = []
         # Used only for 'contain' mode.
         self.scale_height = params.get('scale_height', 14.107334041)
         self.scale_slope = params.get('scale_slope', 5.86322059)
-        # Used only for 'score' mode (default). 
+        # Used only for 'score' mode (default).
         self.scale_embedding = params.get('scale_embedding', 1.0)
         self.predict_mode = params.get('predict_mode', 'score')
 
@@ -146,9 +146,9 @@ class ConeClusterer:
             direction vector.
 
         Returns:
-            - cone (Cone Object): Cone object with the specified parameters. 
+            - cone (Cone Object): Cone object with the specified parameters.
         """
-        
+
         cent = np.mean(coords, axis=0)
         #axis = np.mean(coords - vertex, axis=0) * self.scale_height
         height = np.linalg.norm(cent - vertex) * self.scale_height
@@ -158,14 +158,13 @@ class ConeClusterer:
         cone = Cone(vertex[:3], direction, height, slope * self.scale_slope, name=name)
         return cone
 
-    def fit_cones(self, shower_energy, primaries, fragments, directions):
+    def fit_cones(self, primaries, fragments, directions):
         self._cones = []
         if len(fragments) != len(primaries):
             raise AssertionError("FragmentEstimator did not find a fragment for each primary")
         for i, p in enumerate(primaries):
             vertex, direction = p[:3], directions[i]
-            ind = fragments[i]
-            cone = self.make_cone(shower_energy[:, :3][ind], vertex, directions[i])
+            cone = self.make_cone(fragments[i][:,:3], vertex, directions[i])
             self._cones.append(cone)
 
     def fit_predict(self, shower_energy, primaries, fragments, directions):
@@ -178,20 +177,20 @@ class ConeClusterer:
             coordinates and last column gives the energy depositions.
             - primaries (np.ndarray): N_p x 3 array of em primary vertices.
             - fragments (list of np.ndarray): fragment indices from FragmentEstimator
-            - directions (np.ndarray): estimated direction vectors from DirectionEstimator. 
+            - directions (np.ndarray): estimated direction vectors from DirectionEstimator.
 
         Returns:
-            - pred (np.ndarray): (N, ) array of predicted cluster labels. 
+            - pred (np.ndarray): (N, ) array of predicted cluster labels.
 
-        NOTE: 
+        NOTE:
         1) All points that do not belong inside any cones are given label -1.
         2) We calculate the score of a point belonging to a cone instance, using the
         euclidean distance calculated in transformed (r,t) space (see Cone::transform).
         3) We reject particles that violate causality, i.e., particles that must propagate
-        backwards in time to lie within any cone. 
+        backwards in time to lie within any cone.
 
         """
-        self.fit_cones(shower_energy, primaries, fragments, directions)
+        self.fit_cones(primaries, fragments, directions)
         if self.predict_mode == 'contain':
             pred = -np.ones((shower_energy.shape[0], ))
             for i, cone in enumerate(self._cones):
@@ -201,7 +200,7 @@ class ConeClusterer:
         elif self.predict_mode == 'score':
             scores = []
             for i, cone in enumerate(self._cones):
-                s = cone.get_scores(shower_energy, norm=float('inf'))
+                s = cone.get_scores(shower_energy[:, :3], norm=float('inf'))
                 scores.append(s.reshape(s.shape[0], 1))
             scores = np.hstack(scores)
             self._scores = scores
@@ -217,4 +216,3 @@ class ConeClusterer:
     @property
     def scores(self):
         return self._scores
-
