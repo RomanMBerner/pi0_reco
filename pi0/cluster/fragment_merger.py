@@ -153,11 +153,13 @@ def create_tree(fragments, threshold_perp,  threshold_rad):
     2020.01.10 kvtsang Created
     2020.01.13 kvtsang Use the closest projected distance for matching.
                        At most one backward fragment will be found.
+    2020.02.24 kvtsang Skip back-to-back fragments matching.
     """
     n = len(fragments)
-    #A = np.zeros((n, n))
-    #scores = np.zeros(n)
     parents = -np.ones(n, dtype=np.int)
+
+    directions = np.array([
+        find_direction(frag[0], frag[1][:, :3]) for frag in fragments])
 
     for i, frag_i in enumerate(fragments):
         start = np.array(frag_i[0])
@@ -165,7 +167,7 @@ def create_tree(fragments, threshold_perp,  threshold_rad):
 
         # estimate the direction vector
         # skip for tiny fragment
-        v = find_direction(start, voxels_i)
+        v = directions[i]
         if np.allclose(v, np.zeros(3)):
             continue
 
@@ -174,6 +176,11 @@ def create_tree(fragments, threshold_perp,  threshold_rad):
         for j, frag_j in enumerate(fragments):
             if i == j:
                 continue
+
+            # skip back-to-back fragment pairs
+            if v.dot(directions[j]) <= 0:
+                continue
+
             voxels_j = frag_j[1][:, :3]
             dp = voxels_j - start
 
@@ -228,6 +235,7 @@ def trace_tree(parents):
     -------
     DATE       WHO     WHAT
     2020.01.10 kvtsang Created
+    2020.02.04 kvtsang Break 1-loop if i->j and j->i
 
     See also
     --------
@@ -258,6 +266,13 @@ def trace_tree(parents):
     n = len(parents)
     fast_forward = [-1] * n
     output = {}
+
+    # speical treatment if i->j and j->i
+    for i in range(n):
+        j = parents[i]
+        if j != -1 and i == parents[j]:
+            parents[i] = -1
+            parents[j] = -1
 
     for i in range(n):
         curr = i
