@@ -3,7 +3,7 @@ from scipy.spatial.distance import cdist
 import numpy as np
 
 
-def find_direction(start, points, max_dist=10):
+def find_direction(start, points, max_dist):
     """
     Estimate the direction of fragment points using a small sphere around
     the staring points.
@@ -18,26 +18,30 @@ def find_direction(start, points, max_dist=10):
 
     max_dist: float
         the size of sphere used to estimate the direction
-        default = 10 voxels
 
     Returns
     -------
-    v: ndrray, dim = (3, )
+    v: ndarray, dim = (3, )
         estimated direction vector
         return (0, 0, 0) if there is not enought neigbor points
+
+    selected: ndarray of bool, dim = (M, )
+        mask array for direction calculation
 
     History
     -------
     DATE       WHO     WHAT
     2020.01.10 kvtsang Created
+    2020.02.04 kvtsang Return mask array for selected voxels
     """
     dist = cdist([start], points)[0]
 
-    neighbors = points[dist < max_dist]
+    selected = dist < max_dist
+    neighbors = points[selected]
 
     # not enought voxels to estimate the directions
     if len(neighbors) < 5:
-        return np.zeros(3)
+        return np.zeros(3), selected
 
     # the major eigenvector
     fit = PCA(n_components=1).fit(neighbors)
@@ -47,7 +51,8 @@ def find_direction(start, points, max_dist=10):
     centroid = np.mean(points, axis=0)
     if v.dot(centroid - start) < 0:
         v *= -1
-    return v
+
+    return v, selected
 
 
 def partition(A):
@@ -116,7 +121,7 @@ def partition(A):
     return groups
 
 
-def create_tree(fragments, threshold_perp,  threshold_rad):
+def create_tree(fragments, threshold_perp,  threshold_rad, veto_dist):
     """
     Create a tree-like structure for shower framgments.
 
@@ -134,6 +139,10 @@ def create_tree(fragments, threshold_perp,  threshold_rad):
 
     threshold_rad: float
         maximumn radiation lenght between voxels in a fragment and a starting position
+    
+    veto_dist: float
+        veto distance within starting point to avoid toching to the starting point
+        The vetod voxels are used to calculate direction
 
     Returns
     -------
@@ -158,8 +167,12 @@ def create_tree(fragments, threshold_perp,  threshold_rad):
     n = len(fragments)
     parents = -np.ones(n, dtype=np.int)
 
-    directions = np.array([
-        find_direction(frag[0], frag[1][:, :3]) for frag in fragments])
+    directions = []
+    veto_masks = []
+    for frag in fragments:
+        v, mask = find_direction(frag[0], frag[1][:, :3], veto_dist)
+        directions.append(v)
+        veto_masks.append(~mask)
 
     for i, frag_i in enumerate(fragments):
         start = np.array(frag_i[0])
@@ -181,7 +194,11 @@ def create_tree(fragments, threshold_perp,  threshold_rad):
             if v.dot(directions[j]) <= 0:
                 continue
 
-            voxels_j = frag_j[1][:, :3]
+            veto_mask = veto_masks[j]
+            if not np.any(veto_mask):
+                continue
+
+            voxels_j = frag_j[1][veto_mask, :3]
             dp = voxels_j - start
 
             # projection of frag_j's voxels to the direction of frag_i
@@ -311,7 +328,7 @@ def trace_tree(parents):
     return output
 
 
-def group_fragments(fragments, dist_prep=15, dist_rad=150):
+def group_fragments(fragments, dist_prep=15, dist_rad=150, veto_dist=10):
     """
     Merge shower fragments using backward direction matching.
 
@@ -325,6 +342,11 @@ def group_fragments(fragments, dist_prep=15, dist_rad=150):
 
     dist_rad: float
         threshold on radiation length, default = 150 voxels
+
+    veto_dist: float
+        veto distance within starting point to avoid toching to the starting point
+        The vetod voxels are used to calculate direction
+        default = 10 voxels
 
     Returns
     -------
@@ -351,7 +373,7 @@ def group_fragments(fragments, dist_prep=15, dist_rad=150):
                        Returned root of each merged fragments
     """
 
-    parents = create_tree(fragments, dist_prep, dist_rad)
+    parents = create_tree(fragments, dist_prep, dist_rad, veto_dist)
     psuedo_trees = trace_tree(parents)
 
     roots = list(psuedo_trees.keys())
