@@ -8,6 +8,7 @@ from .cluster.dbscan import DBSCANCluster
 from .identification.matcher import Pi0Matcher
 from mlreco.main_funcs import process_config, prepare
 from mlreco.utils import CSVData
+from mlreco.utils.ppn import uresnet_ppn_type_point_selector
 
 # Class that contains all the shower information
 class Shower():
@@ -668,10 +669,17 @@ class Pi0Chain():
     def draw(self,**kargs):
         import plotly
         from mlreco.visualization.points import scatter_points
-        #import plotly.plotly as py
         import plotly.graph_objs as go
-        from plotly.offline import init_notebook_mode, iplot
-        init_notebook_mode(connected=False)
+        from plotly.offline import iplot
+
+        # If requested, draw the input of the chain
+        if draw_input:
+            if self.cfg['input'] == 'energy':
+                graph_input = scatter_label(self.event['energy'], self.event['energy'][:,-1], 2)
+            else:
+                graph_input = scatter_label(self.event['charge'], self.event['charge'][:,-1], 2)
+
+            iplot(go.Figure(data=graph_input, layout=plotly_layout3d()))
 
         graph_data = []
         # Draw voxels with cluster labels
@@ -716,13 +724,3 @@ class Pi0Chain():
         # Draw
         iplot(go.Figure(data=graph_data,layout=self.layout(**kargs)))
 
-#    @staticmethod
-#    def is_shower(particle):
-#        '''
-#        Check if the particle is a shower
-#        '''
-#        pdg_code = abs(particle.pdg_code())
-#        if not pdg_code == 22 and not pdg_code == 11 :
-#            return False
-#
-#        return False
