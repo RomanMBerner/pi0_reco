@@ -8,7 +8,7 @@ from .cluster.dbscan import DBSCANCluster
 from .identification.matcher import Pi0Matcher
 from mlreco.main_funcs import process_config, prepare
 from mlreco.utils import CSVData
-
+from mlreco.utils.ppn import uresnet_ppn_type_point_selector
 # Class that contains all the shower information
 class Shower():
     def __init__(self, start=[], direction=[], voxels=[], energy=-1., pid=-1):
@@ -202,6 +202,7 @@ class Pi0Chain():
         for i, m in enumerate(masses):
             self.log(event_id, i, m)
 
+
     def infer_inputs(self,event):
         if self.cfg['deghost'] == "label" or self.cfg['segment'] == 'label':
             assert 'segment_label' in event
@@ -359,14 +360,14 @@ class Pi0Chain():
                 self.output['showers'] = showers
 
         elif self.cfg['shower_start'] == 'ppn':
-            from mlreco.utils.ppn import uresnet_ppn_point_selector
+            from mlreco.utils.ppn import uresnet_ppn_type_point_selector
             shower_score_index = -1 * (int(larcv.kShapeUnknown) - int(larcv.kShapeShower))
             point_score_index  = -1 * (int(larcv.kShapeUnknown) + 1)
-            points = uresnet_ppn_type_point_selector(self.output['forward'])
+            points = uresnet_ppn_type_point_selector([event['input_data']],self.output['forward'])
             points = points[np.where(points[:,shower_score_index] > self.cfg.get('shower_score_threshold',0.5))]
             total_score = points[:,shower_score_index] * points[:,point_score_index]
             order  = np.argsort(total_score)
-            self.output['showers'] = [Shower(start=points[i,:-1],pid=int(i)) for i in order]
+            self.output['showers'] = [Shower(start=points[i,:3],pid=int(i)) for i in order]
 
         else:
             raise ValueError('EM shower primary identifiation method not recognized:', self.cfg['shower_start'])
@@ -596,7 +597,7 @@ class Pi0Chain():
                     print('WARNING: in identify_pi0, ignoring >2 particle pairs from the shared parent...')
                     for p in pids[1:]:
                         print('ID =',p)
-                        print(events['particles'][0][p].dump())
+                        print(event['particles'][0][p].dump())
 
             """
             # Get the creation point of each particle. If two gammas originate from the same point,
@@ -654,6 +655,7 @@ class Pi0Chain():
         masses = []
         for match in self.output['matches']:
             idx1, idx2 = match
+
             s1, s2 = self.output['showers'][idx1], self.output['showers'][idx2]
             e1, e2 = s1.energy, s2.energy
             t1, t2 = s1.direction, s2.direction
