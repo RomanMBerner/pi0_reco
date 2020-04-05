@@ -9,6 +9,8 @@ from .identification.matcher import Pi0Matcher
 from mlreco.main_funcs import process_config, prepare
 from mlreco.utils import CSVData
 from mlreco.utils.ppn import uresnet_ppn_type_point_selector
+
+
 # Class that contains all the shower information
 class Shower():
     def __init__(self, start=[], direction=[], voxels=[], energy=-1., pid=-1):
@@ -18,6 +20,7 @@ class Shower():
         self.energy = energy
         self.pid = int(pid)
 
+
 # Chain object class that loads and stores the chain parameters
 class Pi0Chain():
 
@@ -25,6 +28,7 @@ class Pi0Chain():
     IDX_SEMANTIC_ID = -1
     IDX_GROUP_ID = -2
     IDX_CLUSTER_ID = -3
+
 
     def __init__(self, io_cfg, chain_cfg, verbose=False):
         '''
@@ -76,16 +80,20 @@ class Pi0Chain():
         self.hs = prepare(io_cfg)
         self.data_set = iter(self.hs.data_io)
 
+
     def hs(self):
         return self.hs
 
+
     def data_set(self):
         return self.data_set
+
 
     def log(self, eid, pion_id, pion_mass):
         self._log.record(self._keys, [eid, pion_id, pion_mass])
         self._log.write()
         self._log.flush()
+
 
     def run(self):
         '''
@@ -96,6 +104,7 @@ class Pi0Chain():
         n_events = len(self.hs.data_io)
         for i in range(n_events):
             self.run_loop()
+
 
     def select_overlap(self, a0, a1, overlap=True, dim=3):
         '''
@@ -161,7 +170,7 @@ class Pi0Chain():
 
         # Filter out ghosts
         self.filter_ghosts(event)
-
+        
         # Reconstruct energy
         self.charge_to_energy(event)
 
@@ -175,7 +184,7 @@ class Pi0Chain():
             if self.verbose:
                 print('No shower start point found in event', event_id)
             return []
-
+        
         # Form shower fragments
         self.reconstruct_shower_fragments(event)
 
@@ -194,6 +203,9 @@ class Pi0Chain():
             if self.verbose:
                 print('No pi0 found in event', event_id)
             return []
+        
+        # Make fiducialization (put shower number on self.output['OOFV'] if >0 edeps of the shower is/are OOFV)
+        self.fiducialize(event)
 
         # Compute masses
         masses = self.pi0_mass()
@@ -324,6 +336,7 @@ class Pi0Chain():
         else:
             raise ValueError('Energy reconstruction method not recognized:', self.cfg['charge2energy'])
 
+
     def reconstruct_shower_starts(self, event):
         '''
         Identify starting points of showers. Points should be ordered by the definiteness of a shower
@@ -371,6 +384,7 @@ class Pi0Chain():
 
         else:
             raise ValueError('EM shower primary identifiation method not recognized:', self.cfg['shower_start'])
+
 
     def reconstruct_shower_fragments(self,event):
         '''
@@ -613,7 +627,7 @@ class Pi0Chain():
                         self.output['matches'].append([i,j])
                         self.output['vertices'].append(ci)
             """
-
+            
             return self.output['matches']
 
         elif self.cfg['shower_match'] == 'proximity':
@@ -647,6 +661,44 @@ class Pi0Chain():
         else:
             raise ValueError('Shower matching method not recognized:', self.cfg['shower_match'])
 
+
+    def fiducialize(self, event):
+        '''
+        If a shower has edeps Out Of Fiducial Volume (OOFV), put the shower number to self.output['OOFV']
+        '''
+        self.output['OOFV'] = []
+        
+        if self.cfg['fiducialize'] > 0:
+            #print(' Fiducialization: ', self.cfg['fiducialize'], ' pixels from boundary.')
+            pass
+        elif self.cfg['fiducialize'] == 0:
+            #print(' No fiducialization to be done.')
+            return self.output['OOFV']
+        else:
+            raise ValueError('fiducialize method (in chain.py) not recognized. Require integer >= 0. You entered:', self.cfg['fiducialize'])
+
+        energy      = self.output['energy'] # Voxel id x, y, z, batch_id (0), true deposited energy
+        shower_mask = self.output['shower_mask']
+        
+        # Obtain shower's info: x,y,z,batch_id,e_deposited
+        shower_counter = 0
+        for s in self.output['showers']: # s is shower object
+            s.x        = energy[shower_mask][s.voxels][:,0]
+            s.y        = energy[shower_mask][s.voxels][:,1]
+            s.z        = energy[shower_mask][s.voxels][:,2]
+            s.batch_id = energy[shower_mask][s.voxels][:,3]
+            s.edep     = energy[shower_mask][s.voxels][:,4]
+            coords     = np.array((s.x,s.y,s.z))
+            
+            # If at least one edep is OOFV: Put shower number to list self.output['OOFV']
+            if ( np.any(coords<self.cfg['fiducialize']) or np.any(coords>(767-self.cfg['fiducialize'])) ):
+                self.output['OOFV'].append(shower_counter)
+
+            shower_counter += 1
+
+        return self.output['OOFV']
+
+
     def pi0_mass(self):
         '''
         Reconstructs the pi0 mass
@@ -655,6 +707,18 @@ class Pi0Chain():
         masses = []
         for match in self.output['matches']:
             idx1, idx2 = match
+
+            # Do not use the pi0 decay if at least one of the showers has edeps OOFV:
+            if (idx1 in self.output['OOFV']):
+                print(' Event', self.event['index'][0],
+                      ': Some edeps of shower', idx1, 'are OOFV (<', self.cfg['fiducialize'], 'pixels from boundary). ')
+                self.output['masses'] = masses
+                return masses
+            if (idx2 in self.output['OOFV']):
+                print(' Event', self.event['index'][0],
+                      ': Some edeps of shower', idx2, 'are OOFV (<', self.cfg['fiducialize'], 'pixels from boundary). ')
+                self.output['masses'] = masses
+                return masses
 
             s1, s2 = self.output['showers'][idx1], self.output['showers'][idx2]
             e1, e2 = s1.energy, s2.energy
@@ -666,6 +730,7 @@ class Pi0Chain():
             masses.append(sqrt(2*e1*e2*(1-costheta)))
         self.output['masses'] = masses
         return masses
+
 
     def draw(self,**kargs):
         import plotly
@@ -709,6 +774,11 @@ class Pi0Chain():
             for i, match in enumerate(self.output['matches']):
                 v = self.output['vertices'][i]
                 idx1, idx2 = match
+                
+                # Continue if at least one shower of the reconstructed pi0 decay is OOFV
+                if (idx1 in self.output['OOFV'] or idx2 in self.output['OOFV']):
+                    continue
+
                 s1, s2 = self.output['showers'][idx1].start, self.output['showers'][idx2].start
                 points = [v, s1, v, s2]
                 graph_data += scatter_points(np.array(points),color='red')
@@ -717,6 +787,7 @@ class Pi0Chain():
 
         # Draw
         iplot(go.Figure(data=graph_data,layout=self.layout(**kargs)))
+
 
 #    @staticmethod
 #    def is_shower(particle):
