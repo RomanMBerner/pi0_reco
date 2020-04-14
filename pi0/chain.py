@@ -377,7 +377,8 @@ class Pi0Chain():
             shower_score_index = -1 * (int(larcv.kShapeUnknown) - int(larcv.kShapeShower))
             point_score_index  = -1 * (int(larcv.kShapeUnknown) + 1)
             points = uresnet_ppn_type_point_selector([event['input_data']],self.output['forward'])
-            points = points[np.where(points[:,shower_score_index] > self.cfg.get('shower_score_threshold',0.5))]
+            #points = points[np.where(points[:,shower_score_index] > self.cfg.get('shower_score_threshold',0.5))] # rberner: original line
+            points = points[0][np.where(points[0][:,shower_score_index] > self.cfg.get('shower_score_threshold',0.5))] # rberner: changed to this one
             total_score = points[:,shower_score_index] * points[:,point_score_index]
             order  = np.argsort(total_score)
             self.output['showers'] = [Shower(start=points[i,:3],pid=int(i)) for i in order]
@@ -710,13 +711,13 @@ class Pi0Chain():
 
             # Do not use the pi0 decay if at least one of the showers has edeps OOFV:
             if (idx1 in self.output['OOFV']):
-                print(' Event', self.event['index'][0],
-                      ': Some edeps of shower', idx1, 'are OOFV (<', self.cfg['fiducialize'], 'pixels from boundary). ')
+                #print(' Event', self.event['index'][0],
+                #      ': Some edeps of shower', idx1, 'are OOFV (<', self.cfg['fiducialize'], 'pixels from boundary). ')
                 self.output['masses'] = masses
                 return masses
             if (idx2 in self.output['OOFV']):
-                print(' Event', self.event['index'][0],
-                      ': Some edeps of shower', idx2, 'are OOFV (<', self.cfg['fiducialize'], 'pixels from boundary). ')
+                #print(' Event', self.event['index'][0],
+                #      ': Some edeps of shower', idx2, 'are OOFV (<', self.cfg['fiducialize'], 'pixels from boundary). ')
                 self.output['masses'] = masses
                 return masses
 
@@ -725,7 +726,10 @@ class Pi0Chain():
             t1, t2 = s1.direction, s2.direction
             costheta = np.dot(t1, t2)
             if abs(costheta) > 1.:
-                masses.append(0.)
+                masses.append(-9)
+                continue
+            if e1 < 35. or e2 < 35.:
+                masses.append(-3)
                 continue
             masses.append(sqrt(2*e1*e2*(1-costheta)))
         self.output['masses'] = masses
