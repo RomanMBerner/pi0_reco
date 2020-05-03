@@ -185,7 +185,7 @@ class Pi0Chain():
         # Check data dimensions
         assert self.output['energy' ].shape == self.output['charge'].shape
         assert self.output['energy' ].shape == self.output['segment'].shape
-
+        
         # Identify shower starting points, skip if there is less than 2 (no pi0)
         self.reconstruct_shower_starts(event)
         if len(self.output['showers']) < 2:
@@ -202,28 +202,28 @@ class Pi0Chain():
 
         # Reconstruct shower direction vectors
         self.reconstruct_shower_directions(event)
-
+        
         # Reconstruct shower cluster
         self.reconstruct_shower_cluster(event)
-
+        
         # Reconstruct shower energy
         self.reconstruct_shower_energy(event)
-
+        
         # Identify pi0 decays
         self.identify_pi0(event)
         if not len(self.output['matches']):
-            #if self.verbose:
-            #    print('No pi0 found in event', event_id)
+            if self.verbose:
+                print('No pi0 found in event', event_id)
             return []
 
         # Make fiducialization (put shower number to self.output['OOFV'] if >0 edep of the shower is OOFV)
         # This is relatively strict -> might want to add the shower to OOFV
         # only if a certain fraction of all edeps is OOFV
         self.fiducialize(event)
-
+        
         # Compute masses
         masses = self.pi0_mass()
-
+        
         # Log masses
         for i, m in enumerate(masses):
             self.log(event_id, i, m)
@@ -725,21 +725,19 @@ class Pi0Chain():
         '''
         from math import sqrt
         masses = []
+        
         for match in self.output['matches']:
             idx1, idx2 = match
 
             # Do not use the pi0 decay if at least one of the showers has edeps OOFV:
             if (idx1 in self.output['OOFV']):
-                print(' Event', self.event['index'][0],
-                      ': Some edeps of shower', idx1, 'are OOFV (<', self.cfg['fiducialize'], 'pixels from boundary). ')
-                self.output['masses'] = masses
-                return masses
+                if self.verbose:
+                    print(' Event', self.event['index'], ': Some edeps of shower', idx1, 'are OOFV (<', self.cfg['fiducialize'], 'pixels from boundary) -> Skip this shower. ')
+                continue
             if (idx2 in self.output['OOFV']):
-                print(' Event', self.event['index'][0],
-                      ': Some edeps of shower', idx2, 'are OOFV (<', self.cfg['fiducialize'], 'pixels from boundary). ')
-                self.output['masses'] = masses
-                return masses
-
+                if self.verbose:
+                    print(' Event', self.event['index'], ': Some edeps of shower', idx2, 'are OOFV (<', self.cfg['fiducialize'], 'pixels from boundary) -> Skip this shower. ')
+                continue
             s1, s2 = self.output['showers'][idx1], self.output['showers'][idx2]
             e1, e2 = s1.energy, s2.energy
             t1, t2 = s1.direction, s2.direction
