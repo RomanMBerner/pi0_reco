@@ -192,9 +192,13 @@ class Pi0Chain():
             if self.verbose:
                 print('No shower start point found in event', event_id)
             return []
-
+        
         # Form shower fragments
         self.reconstruct_shower_fragments(event)
+        if len(self.output['showers']) < 2:
+            if self.verbose:
+                print('No shower fragment found in event', event_id)
+            return []
 
         # Reconstruct shower direction vectors
         self.reconstruct_shower_directions(event)
@@ -450,16 +454,19 @@ class Pi0Chain():
                 self.output['leftover_fragments'].append(self.select_overlap(shower_points,remain_cluster))
 
         elif self.cfg['shower_fragment'] == 'dbscan':
-            clusts, remaining_clusts, remaining_energy = self.frag_est.create_clusters(shower_points, shower_starts)
             showers = []
-            assert len(clusts) == len(self.output['showers'])
-            for idx, cluster in enumerate(clusts):
-                if len(cluster) < 1: continue
-                showers.append(self.output['showers'][idx])
-                self.output['shower_fragments'].append(cluster)
-            self.output['showers'] = showers
-            self.output['leftover_fragments'] = remaining_clusts
-            self.output['leftover_energy']    = remaining_energy
+            if len(shower_points)<1:
+                self.output['showers'] = showers
+            else:
+                clusts, remaining_clusts, remaining_energy = self.frag_est.create_clusters(shower_points, shower_starts)
+                assert len(clusts) == len(self.output['showers'])
+                for idx, cluster in enumerate(clusts):
+                    if len(cluster) < 1: continue
+                    showers.append(self.output['showers'][idx])
+                    self.output['shower_fragments'].append(cluster)
+                self.output['showers'] = showers
+                self.output['leftover_fragments'] = remaining_clusts
+                self.output['leftover_energy']    = remaining_energy
 
         else:
             raise ValueError('Shower fragment reconstruction method not recognized:', self.cfg['shower_fragment'])
