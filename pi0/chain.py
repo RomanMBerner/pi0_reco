@@ -31,7 +31,7 @@ class Pi0Chain():
     IDX_CLUSTER_ID = -3
 
 
-    def __init__(self, io_cfg, chain_cfg, verbose=True):
+    def __init__(self, io_cfg, chain_cfg, verbose=False):
         '''
         Initializes the chain from the configuration file
         '''
@@ -153,6 +153,22 @@ class Pi0Chain():
         '''
         # Reset output
         self.output = {}
+        
+        self.reco_info['n_pi0']                  = 0    # [-]
+        self.reco_info['n_gammas']               = 0    # [-]
+        self.reco_info['matches']                = []   # [-]
+        self.reco_info['gamma_mom']              = []   # [MeV/c]
+        self.reco_info['gamma_dir']              = []   # [x,y,z]
+        self.reco_info['gamma_start']            = []   # [x,y,z] # pi0->2gamma vertex
+        self.reco_info['gamma_edep']             = []   # [MeV]
+        self.reco_info['gamma_pid']              = []   # [-]
+        self.reco_info['gamma_voxels_mask']      = []   # [-]
+        self.reco_info['gamma_n_voxels_mask']    = []   # [-]
+        self.reco_info['gamma_voxels']           = []   # [-]
+        self.reco_info['gamma_n_voxels']         = []   # [-]
+        self.reco_info['gamma_angle']            = []   # [rad]
+        self.reco_info['pi0_mass']               = []   # [MeV/c2]
+        self.reco_info['OOFV']                   = []   # [-]
 
         # Load data
         if not self.network:
@@ -172,27 +188,27 @@ class Pi0Chain():
 
         # Set the semantics
         self.infer_semantics(event)
-        
+
         # Extract true information about pi0 -> gamma + gamma
         self.extract_true_information(event)
 
         # Filter out ghosts
         self.filter_ghosts(event)
-        
+
         # Reconstruct energy
         self.charge_to_energy(event)
 
         # Check data dimensions
         assert self.output['energy' ].shape == self.output['charge'].shape
         assert self.output['energy' ].shape == self.output['segment'].shape
-        
+
         # Identify shower starting points, skip if there is less than 2 (no pi0)
         self.reconstruct_shower_starts(event)
         if len(self.output['showers']) < 2:
             if self.verbose:
                 print('No shower start point found in event', event_id)
             return []
-        
+
         # Form shower fragments
         self.reconstruct_shower_fragments(event)
         if len(self.output['showers']) < 2:
@@ -202,13 +218,13 @@ class Pi0Chain():
 
         # Reconstruct shower direction vectors
         self.reconstruct_shower_directions(event)
-        
+
         # Reconstruct shower cluster
         self.reconstruct_shower_cluster(event)
-        
+
         # Reconstruct shower energy
         self.reconstruct_shower_energy(event)
-        
+
         # Identify pi0 decays
         self.identify_pi0(event)
         if not len(self.output['matches']):
@@ -220,10 +236,10 @@ class Pi0Chain():
         # This is relatively strict -> might want to add the shower to OOFV
         # only if a certain fraction of all edeps is OOFV
         self.fiducialize(event)
-        
+
         # Compute masses
         masses = self.pi0_mass()
-        
+
         # Log masses
         for i, m in enumerate(masses):
             self.log(event_id, i, m)
@@ -698,9 +714,9 @@ class Pi0Chain():
         else:
             raise ValueError('fiducialize method (in chain.py) not recognized. Require integer >= 0. You entered:', self.cfg['fiducialize'])
 
-        energy      = self.output['energy'] # Voxel id x, y, z, batch_id (0), true deposited energy
+        energy      = self.output['energy']
         shower_mask = self.output['shower_mask']
-        
+
         # Obtain shower's info: x,y,z,batch_id,e_deposited
         shower_counter = 0
         for s in self.output['showers']: # s is shower object
@@ -710,7 +726,7 @@ class Pi0Chain():
             s.batch_id = energy[shower_mask][s.voxels][:,3]
             s.edep     = energy[shower_mask][s.voxels][:,4]
             coords     = np.array((s.x,s.y,s.z))
-            
+
             # If at least one edep is OOFV: Put shower number to list self.output['OOFV']
             if ( np.any(coords<self.cfg['fiducialize']) or np.any(coords>(767-self.cfg['fiducialize'])) ):
                 self.output['OOFV'].append(shower_counter)
@@ -730,13 +746,9 @@ class Pi0Chain():
             idx1, idx2 = match
 
             # Do not use the pi0 decay if at least one of the showers has edeps OOFV:
-            if (idx1 in self.output['OOFV']):
+            if (idx1 in self.output['OOFV'] or idx2 in self.output['OOFV']):
                 if self.verbose:
-                    print(' Event', self.event['index'], ': Some edeps of shower', idx1, 'are OOFV (<', self.cfg['fiducialize'], 'pixels from boundary) -> Skip this shower. ')
-                continue
-            if (idx2 in self.output['OOFV']):
-                if self.verbose:
-                    print(' Event', self.event['index'], ': Some edeps of shower', idx2, 'are OOFV (<', self.cfg['fiducialize'], 'pixels from boundary) -> Skip this shower. ')
+                    print('Shower edeps close to LAr volume edge -> skip this pi0 in event ', self.event['index'])
                 continue
             s1, s2 = self.output['showers'][idx1], self.output['showers'][idx2]
             e1, e2 = s1.energy, s2.energy
@@ -895,18 +907,18 @@ class Pi0Chain():
         self.reco_info['ev_id']                  = self.event['index']              # [-]
         self.reco_info['n_pi0']                  = len(self.output['matches'])      # [-]
         self.reco_info['n_gammas']               = 2.*len(self.output['matches'])   # [-]
-        self.reco_info['matches']                = []                               # [-]
-        self.reco_info['gamma_mom']              = []                               # [MeV/c]
-        self.reco_info['gamma_dir']              = []                               # [x,y,z]
-        self.reco_info['gamma_start']            = []                               # [x,y,z] # pi0->2gamma vertex
-        self.reco_info['gamma_edep']             = []                               # [MeV]
-        self.reco_info['gamma_pid']              = []                               # [-]
-        self.reco_info['gamma_voxels_mask']      = []                               # [-]
-        self.reco_info['gamma_n_voxels_mask']    = []                               # [-]
-        self.reco_info['gamma_voxels']           = []                               # [-]
-        self.reco_info['gamma_n_voxels']         = []                               # [-]
-        self.reco_info['gamma_angle']            = []                               # [rad]
-        self.reco_info['pi0_mass']               = []                               # [MeV/c2]
+        #self.reco_info['matches']                = []                               # [-]
+        #self.reco_info['gamma_mom']              = []                               # [MeV/c]
+        #self.reco_info['gamma_dir']              = []                               # [x,y,z]
+        #self.reco_info['gamma_start']            = []                               # [x,y,z] # pi0->2gamma vertex
+        #self.reco_info['gamma_edep']             = []                               # [MeV]
+        #self.reco_info['gamma_pid']              = []                               # [-]
+        #self.reco_info['gamma_voxels_mask']      = []                               # [-]
+        #self.reco_info['gamma_n_voxels_mask']    = []                               # [-]
+        #self.reco_info['gamma_voxels']           = []                               # [-]
+        #self.reco_info['gamma_n_voxels']         = []                               # [-]
+        #self.reco_info['gamma_angle']            = []                               # [rad]
+        #self.reco_info['pi0_mass']               = []                               # [MeV/c2]
         self.reco_info['OOFV']                   = self.output['OOFV']              # [-]
 
         showers = self.output['showers']
