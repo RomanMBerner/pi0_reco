@@ -550,7 +550,8 @@ class Pi0Chain():
             starts = np.array([s.start for s in self.output['showers']])
             fragments = [shower_points[inds] for inds in self.output['shower_fragments']]
             try:
-                res = self.dir_est.get_directions(starts, fragments, max_distance=float('inf'), mode=algo)
+                res = self.dir_est.get_directions(starts, fragments, max_distance=float('inf'), mode=algo) # TODO: rberner: Adjust max_distance, maybe as a function of shower energy or other parameters?
+                #res = self.dir_est.get_directions(starts, fragments, max_distance=float('inf'), mode=algo)
             except AssertionError as err: # Cluster was not found for at least one primary
                 if self.verbose:
                     print('Error in direction reconstruction:', err)
@@ -1036,6 +1037,7 @@ class Pi0Chain():
 
     def draw(self,**kargs):
         import plotly
+        import numpy
         from mlreco.visualization.points import scatter_points
         import plotly.graph_objs as go
         from plotly.offline import iplot
@@ -1046,6 +1048,22 @@ class Pi0Chain():
         shower_mask = self.output['shower_mask']
         graph_data += scatter_points(energy,markersize=2,color=energy[:,-1],colorscale='Inferno')
         graph_data[-1].name='Energy'
+        
+        # Add true pi0 decay points
+        if len(self.true_info['gamma_pos'])>0:
+            true_pi0_decays = self.true_info['gamma_pos']
+            graph_data += scatter_points(numpy.asarray(true_pi0_decays),markersize=6, color='green')
+            graph_data[-1].name = 'True pi0 decay vertices'
+
+        # Add true photon's directions            
+        if 'gamma_pos' in self.true_info and 'gamma_first_step' in self.true_info:
+            for i, true_dir in enumerate(self.true_info['gamma_pos']):
+                vertex = self.true_info['gamma_pos'][i]
+                first_step = self.true_info['gamma_first_step'][i]
+                points = [vertex, first_step]
+                graph_data += scatter_points(np.array(points),markersize=4,color='blue')
+                graph_data[-1].name = 'True photon %i: vertex to first step' % i
+                graph_data[-1].mode = 'lines,markers'
 
         colors = plotly.colors.qualitative.Light24
         for i, s in enumerate(self.output['showers']):
@@ -1071,19 +1089,6 @@ class Pi0Chain():
             graph_data.append(arrows)
 
             # Add a vertex if matches, join vertex to start points
-            for i, match in enumerate(self.output['matches']):
-                v = self.output['vertices'][i]
-                idx1, idx2 = match
-                
-                # Continue if at least one shower of the reconstructed pi0 decay is OOFV
-                if (idx1 in self.output['OOFV'] or idx2 in self.output['OOFV']):
-                    continue
-
-                s1, s2 = self.output['showers'][idx1].start, self.output['showers'][idx2].start
-                points = [v, s1, v, s2]
-                graph_data += scatter_points(np.array(points),color='red')
-                graph_data[-1].name = 'Pi0 (%.2f MeV)' % self.output['masses'][i]
-                graph_data[-1].mode = 'lines,markers'
             if 'matches' in self.output:
                 for i, match in enumerate(self.output['matches']):
                     v = self.output['vertices'][i]
