@@ -111,7 +111,7 @@ class DirectionEstimator():
         self._directions = None
 
     def get_directions(self, primaries, fragments,
-                       max_distance=float('inf'), mode='pca', normalize=True, weighted=False):
+                       max_distance=float(10), mode='pca', normalize=True, weighted=True): # max_distance=float('inf'), weighted=False
         """
         Given data (see FragmentEstimator docstring), return estimated
         unit direction vectors for each primary.

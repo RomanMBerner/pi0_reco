@@ -27,7 +27,7 @@ class Shower():
         Direction  : ({:0.2f},{:0.2f},{:0.2f})
         Voxel count: {}
         Energy     : {}""".format(self.pid, *self.start, *self.direction, len(self.voxels), self.energy)
-
+    
 # Chain object class that loads and stores the chain parameters
 class Pi0Chain():
 
@@ -37,7 +37,7 @@ class Pi0Chain():
     IDX_CLUSTER_ID = -3
 
 
-    def __init__(self, io_cfg, chain_cfg, verbose=True):
+    def __init__(self, io_cfg, chain_cfg, verbose=False):
         '''
         Initializes the chain from the configuration file
         '''
@@ -212,14 +212,14 @@ class Pi0Chain():
         self.reconstruct_shower_starts(event)
         if len(self.output['showers']) < 2:
             if self.verbose:
-                print('No shower start point found in event', event_id)
+                print('< 2 shower start points found in event', event_id)
             return
 
         # Form shower fragments
         self.reconstruct_shower_fragments(event)
         if len(self.output['showers']) < 2:
             if self.verbose:
-                print('No shower fragment found in event', event_id)
+                print('< 2 shower fragment found in event', event_id)
             return
 
         # Reconstruct shower direction vectors
@@ -550,8 +550,7 @@ class Pi0Chain():
             starts = np.array([s.start for s in self.output['showers']])
             fragments = [shower_points[inds] for inds in self.output['shower_fragments']]
             try:
-                res = self.dir_est.get_directions(starts, fragments, max_distance=float('inf'), mode=algo) # TODO: rberner: Adjust max_distance, maybe as a function of shower energy or other parameters?
-                #res = self.dir_est.get_directions(starts, fragments, max_distance=float('inf'), mode=algo)
+                res = self.dir_est.get_directions(starts, fragments, max_distance=float(10), mode=algo) #max_distance=float('inf')
             except AssertionError as err: # Cluster was not found for at least one primary
                 if self.verbose:
                     print('Error in direction reconstruction:', err)
@@ -745,6 +744,10 @@ class Pi0Chain():
                     v = np.array(self.output['vertices'][i])
                     for shower_idx in [idx1,idx2]:
                         new_dir = np.array(points[shower_idx]) - v
+                        if np.all(new_dir==0):
+                            if self.verbose:
+                                print('INFO : ShowerStart == VertexPos -> Do not refit the direction of the shower ... (event:', self.event['index'], ')')
+                            continue
                         self.output['showers'][shower_idx].direction = new_dir/np.linalg.norm(new_dir)
 
             # Below commented out as the clustering stage relies on ordering of merging fragments and
