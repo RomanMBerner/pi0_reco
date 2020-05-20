@@ -437,8 +437,16 @@ class Pi0Chain():
                 primary_labels[mask[idx]] = True
             primaries = np.where(primary_labels)[0]
             primary_clusts = self.output['forward']['shower_fragments'][0][primaries]
-            start_finder = StartPointFinder()
-            start_points = start_finder.find_start_points(self.output['energy'][:,:3], primary_clusts)
+            #start_finder = StartPointFinder()
+            #start_points = start_finder.find_start_points(self.output['energy'][:,:3], primary_clusts)
+            
+            # Getting start points from PPN:
+            start_points = []
+            for clust in primary_clusts:
+                scores = softmax(self.output['forward']['points'][0][clust,3:5], axis=1)
+                argmax = (scores[:,-1]).argmax()
+                pos = self.output['energy'][clust][argmax,:3] + self.output['forward']['points'][0][clust][argmax,:3] + 0.5 # +0.5 (middle of voxel)
+                start_points.append(pos)
             self.output['showers'] = [Shower(start=p,pid=int(i)) for i, p in enumerate(start_points)]
 
         else:
