@@ -3,13 +3,14 @@ from scipy.spatial import distance
 
 class Pi0Matcher():
 
-    def find_matches(self, sh_starts, sh_directions, segment, method, tolerance=10., *ppn_track_points):
+    def find_matches(self, sh_starts, sh_directions, sh_energies, segment, method, tolerance=10., *ppn_track_points):
         '''
         Project 2 paired gammas back to their crossing point and return nearest 
         (within tolerance) track labeled hit as vertex candidate
         Inputs:
             - sh_starts (M x 3): array of shower start points
             - sh_directions (M x 3): array of shower directions
+            - sh_energies (M x 3): array of shower energies
             - segment (N x 5): array of voxels and their semantic segmentation labels
         Returns:
             - Array of id pairs (one per pair of matched showers)
@@ -55,7 +56,7 @@ class Pi0Matcher():
             angular_tolerance = 15. # the sh_direction must be (up to this tolerance) the same as (sh_start-vertex_candidate_pos)
                                     # TODO: Read from config file?
                                     # TODO: Optimise this value (it's probably too small)
-            vertices = self.find_shower_vertices(np.array(sh_starts), np.array(sh_directions), vertex_candidates, spatial_tolerance, angular_tolerance)
+            vertices = self.find_shower_vertices(np.array(sh_starts), np.array(sh_directions), np.array(sh_energies), vertex_candidates, spatial_tolerance, angular_tolerance)
             if len(vertices)==0:
                 return matches, vertices
 
@@ -227,7 +228,7 @@ class Pi0Matcher():
         return np.array(vertex_candidates)
 
 
-    def find_shower_vertices(self, sh_starts, sh_directions, vertex_candidates, spatial_tolerance, angular_tolerance):
+    def find_shower_vertices(self, sh_starts, sh_directions, sh_energies, vertex_candidates, spatial_tolerance, angular_tolerance):
         '''
         Finds vertex_candidates = track-labeled PPN points which are close (distance < tolerance) to any POCA
         Inputs:
@@ -249,10 +250,18 @@ class Pi0Matcher():
         used_sh_indices  = []
         used_sh_vertices = []
         for i, idx in enumerate(idxs):
+            # If shower_start is very close (<spatial_tolerance) to vertex candidate, take vertex_candidate as pi0 decay vertex
             if (dist[i][idx]<spatial_tolerance):
                 used_sh_indices.append(i)
                 used_sh_vertices.append(vertex_candidates[idx])
                 #print(' Take vertex ', vertex_candidates[idx], ' since it is close to shower ', i, ' with start point ', sh_starts[i])
+                
+            # If shower_start is close (<20 px) to vertex candidate and sh_energy is small (<40 MeV), take vertex_candidate as pi0 decay vertex
+            # TODO: Optimise values for energy and distance
+            if (sh_energies[idx]<40. and dist[i][idx]<20):
+                used_sh_indices.append(i)
+                used_sh_vertices.append(vertex_candidates[idx])
+                print(' Take vertex ', vertex_candidates[idx], ' since sh_energy ', sh_energies[idx], ' < 40 MeV and sh_start is close ( ', dist[i][idx], ' < 20 px) to shower ', i, ' with start point ', sh_starts[i])
 
         # For all other showers which do not have a vertex_candidate close enough:
         #Take as vertex vertex_candidate which (in combination with sh_start) is in best angular agreement with the sh_direction

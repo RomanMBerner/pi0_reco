@@ -862,10 +862,11 @@ class Pi0Chain():
                             # TODO: Optimise this parameter
             
             # Pair closest shower vectors
-            sh_starts = np.array([s.start for s in self.output['showers']])
-            sh_dirs = np.array([s.direction for s in self.output['showers']])
+            sh_starts   = np.array([s.start for s in self.output['showers']])
+            sh_dirs     = np.array([s.direction for s in self.output['showers']])
+            sh_energies = np.array([s.energy for s in self.output['showers']])
             try:
-                self.output['matches'], self.output['vertices'], dists = self.matcher.find_matches(sh_starts, sh_dirs, self.output['segment'], self.cfg['shower_match'], tolerance)
+                self.output['matches'], self.output['vertices'], dists = self.matcher.find_matches(sh_starts, sh_dirs, sh_energies, self.output['segment'], self.cfg['shower_match'], tolerance)
             except ValueError as err:
                 if self.verbose:
                     print('Error in PID:', err)
@@ -878,8 +879,9 @@ class Pi0Chain():
             # Pair closest shower vectors
             sh_starts = np.array([s.start for s in self.output['showers']])
             sh_dirs = np.array([s.direction for s in self.output['showers']])
+            sh_energies = np.array([s.energy for s in self.output['showers']])
             try:
-                self.output['matches'], self.output['vertices'] = self.matcher.find_matches(sh_starts, sh_dirs, self.output['segment'], self.cfg['shower_match'], tolerance, self.output['PPN_track_points'])
+                self.output['matches'], self.output['vertices'] = self.matcher.find_matches(sh_starts, sh_dirs, sh_energies, self.output['segment'], self.cfg['shower_match'], tolerance, self.output['PPN_track_points'])
             except ValueError as err:
                 if self.verbose:
                     print('Error in PID:', err)
@@ -1235,11 +1237,11 @@ class Pi0Chain():
             points = np.array([i.ppns for i in self.output['PPN_track_points']])
             graph_data += scatter_points(points,markersize=4, color='purple')
             graph_data[-1].name = 'PPN track points'
-        '''
         if self.output['PPN_shower_points']:
             points = np.array([i.ppns for i in self.output['PPN_shower_points']])
             graph_data += scatter_points(points,markersize=4, color='purple')
             graph_data[-1].name = 'PPN shower points'
+        '''
         if self.output['PPN_michel_points']:
             points = np.array([i.ppns for i in self.output['PPN_michel_points']])
             graph_data += scatter_points(points,markersize=4, color='purple')
@@ -1253,7 +1255,6 @@ class Pi0Chain():
             graph_data += scatter_points(points,markersize=4, color='purple')
             graph_data[-1].name = 'PPN LEScatter points'
         '''
-
 
         # Add true photon's directions            
         if 'gamma_pos' in self.true_info and 'gamma_first_step' in self.true_info:
