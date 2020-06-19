@@ -14,19 +14,22 @@ from mlreco.utils.ppn import uresnet_ppn_type_point_selector
 
 # Class that contains all the shower information
 class Shower():
-    def __init__(self, start=-np.ones(3), direction=-np.ones(3), voxels=[], energy=-1., pid=-1):
+    def __init__(self, start=-np.ones(3), direction=-np.ones(3), voxels=[], energy=-1., pid=-1, group_pred=-1):
         self.start = start
         self.direction = direction
         self.voxels = voxels
         self.energy = energy
         self.pid = int(pid)
+        self.group_pred = int(group_pred)
         
     def __str__(self):
         return """ Shower  ID {}
         Start point: ({:0.2f},{:0.2f},{:0.2f})
         Direction  : ({:0.2f},{:0.2f},{:0.2f})
         Voxel count: {}
-        Energy     : {}""".format(self.pid, *self.start, *self.direction, len(self.voxels), self.energy)
+        Energy     : {}
+        Group_pred : {}
+        """.format(self.pid, *self.start, *self.direction, len(self.voxels), self.energy, self.group_pred)
     
 
 # TODO: Instead of having 5 classes for every semantic type, make one class 'PPN_Predictions' with all shower, track, michel, delta, LEScatter predictions
@@ -544,7 +547,17 @@ class Pi0Chain():
                 primary_labels[mask[idx]] = True
             primaries = np.where(primary_labels)[0]
             primary_clusts = self.output['forward']['shower_fragments'][0][primaries]
+            all_clusts = np.array([np.array(c) for c in self.output['forward']['shower_fragments'][0]])
+            group_ids = self.output['forward']['group_pred'][0]
             
+            # Obtain group_id predicted by GNN for all primary_clusts
+            primary_clusts_group_pred = []
+            for i, primary_cluster in enumerate(primary_clusts):
+                for j, all_cluster in enumerate(all_clusts):
+                    if all_cluster[0]==primary_cluster[0]:
+                        primary_clusts_group_pred.append(group_ids[j])
+                        break
+
             if self.cfg['shower_start'] == 'gnn': # Getting start points from GNN
                 start_finder = StartPointFinder()
                 start_points = start_finder.find_start_points(self.output['energy'][:,:3], primary_clusts)
@@ -559,7 +572,7 @@ class Pi0Chain():
             else:
                 raise ValueError('Shower_start method not recognized:', self.cfg['shower_start'])
 
-            self.output['showers'] = [Shower(start=p,pid=int(i)) for i, p in enumerate(start_points)]
+            self.output['showers'] = [Shower(start=p,pid=int(i),group_pred=int(primary_clusts_group_pred[i])) for i, p in enumerate(start_points)]
 
         else:
             raise ValueError('EM shower primary identifiation method not recognized:', self.cfg['shower_start'])
@@ -714,23 +727,18 @@ class Pi0Chain():
             clusts = np.array([np.array([mapping[i] for i in c]) for c in self.output['forward']['shower_fragments'][0]])
             group_ids = self.output['forward']['group_pred'][0]
             frags, left_frags = [], []
-            #for i in np.unique(group_ids): # np.unique returns SORTED elements of group_ids, however, we want to have the elements according to their appearance in group_ids
-            #    print(' i: ', i)
-            #    idxs = np.where(group_ids == i)[0]
-            #    print(' idxs: ', idxs)
-            #    frags.append(np.concatenate([clusts[j] for j in idxs]))
-            #    print(' frags: ', frags)
-            #print(' frags: ', frags)
             indices = []
             used_group_ids = []
-            for i in group_ids:
-                if i not in used_group_ids:
-                    used_group_ids.append(i)
-                    indices.append(np.where(group_ids == i)[0])
+            for i, sh in enumerate(self.output['showers']):
+                for gr_id in group_ids:
+                    if (gr_id == sh.group_pred) and (gr_id not in used_group_ids):
+                        used_group_ids.append(gr_id)
+                        indices.append(np.where(group_ids == sh.group_pred)[0])
             for frag, ind in enumerate(indices):
                 frags.append(np.concatenate([clusts[j] for j in ind]))
             for i, s in enumerate(self.output['showers']):
                 s.voxels = frags[i]
+                #s.energy = np.sum(self.output['energy'][self.output['shower_mask']][frags[i]][:,-1])
             self.output['shower_fragments'] = frags
             self.output['leftover_fragments'] = left_frags
             

@@ -258,10 +258,10 @@ class Pi0Matcher():
                 
             # If shower_start is close (<20 px) to vertex candidate and sh_energy is small (<40 MeV), take vertex_candidate as pi0 decay vertex
             # TODO: Optimise values for energy and distance
-            if (sh_energies[idx]<40. and dist[i][idx]<20):
-                used_sh_indices.append(i)
-                used_sh_vertices.append(vertex_candidates[idx])
-                print(' Take vertex ', vertex_candidates[idx], ' since sh_energy ', sh_energies[idx], ' < 40 MeV and sh_start is close ( ', dist[i][idx], ' < 20 px) to shower ', i, ' with start point ', sh_starts[i])
+            #if (sh_energies[idx]<40. and dist[i][idx]<20):
+            #    used_sh_indices.append(i)
+            #    used_sh_vertices.append(vertex_candidates[idx])
+            #    print(' Take vertex ', vertex_candidates[idx], ' since sh_energy ', sh_energies[idx], ' < 40 MeV and sh_start is close ( ', dist[i][idx], ' < 20 px) to shower ', i, ' with start point ', sh_starts[i])
 
         # For all other showers which do not have a vertex_candidate close enough:
         #Take as vertex vertex_candidate which (in combination with sh_start) is in best angular agreement with the sh_direction
