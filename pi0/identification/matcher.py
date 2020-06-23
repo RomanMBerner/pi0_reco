@@ -251,6 +251,8 @@ class Pi0Matcher():
         used_sh_vertices = []
         for i, idx in enumerate(idxs):
             # If shower_start is very close (<spatial_tolerance) to vertex candidate, take vertex_candidate as pi0 decay vertex
+            # TODO: Note: Showers with start position very close to the vertex likely are from electrons / positrons.
+            # TODO: If it is likely to be e-/e+: Do not consider this shower and look for other showers instead.
             if (dist[i][idx]<spatial_tolerance):
                 used_sh_indices.append(i)
                 used_sh_vertices.append(vertex_candidates[idx])
@@ -273,7 +275,7 @@ class Pi0Matcher():
             else:
                 min_angle = float('inf')
                 for vtx_index, vtx_pos in enumerate(vertex_candidates):
-                    angle = np.arccos(np.dot((sh_start-vtx_pos)/np.linalg.norm(sh_start-vtx_pos),sh_directions[sh_index]))*360/(2*np.pi)
+                    angle = np.arccos(np.dot((sh_start-vtx_pos)/np.linalg.norm(sh_start-vtx_pos),sh_directions[sh_index]))*360./(2.*np.pi)
                     if angle < min_angle:
                         selected_vtx_index = vtx_index
                         selected_vtx_pos = vtx_pos

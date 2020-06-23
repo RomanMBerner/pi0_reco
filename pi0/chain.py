@@ -90,7 +90,7 @@ class Pi0Chain():
     IDX_CLUSTER_ID = -3
 
 
-    def __init__(self, io_cfg, chain_cfg, verbose=False):
+    def __init__(self, io_cfg, chain_cfg, verbose=True):
         '''
         Initializes the chain from the configuration file
         '''
@@ -1005,6 +1005,8 @@ class Pi0Chain():
         self.true_info['n_pi0']             = 0                   # [-]
         self.true_info['n_gammas']          = 0                   # [-]
         self.true_info['pi0_track_ids']     = []                  # [-]
+        self.true_info['pi0_ekin']          = []                  # [MeV]
+        self.true_info['pi0_mom']           = []                  # [MeV/c]
         self.true_info['gamma_group_ids']   = []                  # [-]
         self.true_info['gamma_mom']         = []                  # [MeV/c]
         self.true_info['gamma_dir']         = []                  # [x,y,z]
@@ -1026,6 +1028,8 @@ class Pi0Chain():
                 if p.parent_track_id() not in self.true_info['pi0_track_ids']:
                     self.true_info['n_pi0'] += 1
                     self.true_info['pi0_track_ids'].append(p.parent_track_id())
+                    self.true_info['pi0_ekin'].append(p.energy_init())
+                    self.true_info['pi0_mom'].append([p.px(),p.py(),p.pz()])
                     self.true_info['gamma_mom'].append([p.px(),p.py(),p.pz()])
                     direction = [p.px(),p.py(),p.pz()]/np.linalg.norm([p.px(),p.py(),p.pz()])
                     self.true_info['gamma_dir'].append(direction)
