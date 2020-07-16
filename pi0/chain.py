@@ -1,8 +1,10 @@
 import numpy as np
 from numpy import linalg
 import yaml
+import torch
 from copy import copy
 from larcv import larcv
+from scipy.spatial import distance
 from .directions.estimator import FragmentEstimator, DirectionEstimator
 from .cluster.start_finder import StartPointFinder
 from .cluster.cone_clusterer import ConeClusterer
@@ -11,6 +13,7 @@ from .identification.matcher import Pi0Matcher
 from mlreco.main_funcs import process_config, prepare
 from mlreco.utils import CSVData
 from mlreco.utils.ppn import uresnet_ppn_type_point_selector
+from mlreco.utils.gnn.cluster import cluster_direction
 
 # Class that contains all the shower information
 class Shower():
@@ -30,7 +33,6 @@ class Shower():
         Energy     : {}
         Group_pred : {}
         """.format(self.pid, *self.start, *self.direction, len(self.voxels), self.energy, self.group_pred)
-    
 
 # TODO: Instead of having 5 classes for every semantic type, make one class 'PPN_Predictions' with all shower, track, michel, delta, LEScatter predictions
 class ShowerPoints():
@@ -90,7 +92,7 @@ class Pi0Chain():
     IDX_CLUSTER_ID = -3
 
 
-    def __init__(self, io_cfg, chain_cfg, verbose=True):
+    def __init__(self, io_cfg, chain_cfg, verbose=False):
         '''
         Initializes the chain from the configuration file
         '''
@@ -682,15 +684,22 @@ class Pi0Chain():
             shower_points = self.output['energy'][self.output['shower_mask']]
             starts = np.array([s.start for s in self.output['showers']])
             fragments = [shower_points[inds] for inds in self.output['shower_fragments']]
-            try:
-                res = self.dir_est.get_directions(starts, fragments, max_distance=float(10), mode=algo) #max_distance=float('inf')
-            except AssertionError as err: # Cluster was not found for at least one primary
-                if self.verbose:
-                    print('Error in direction reconstruction:', err)
-                res = [[0., 0., 0.] for _ in range(len(self.output['showers']))]
 
+            # Old method
+            #try:
+            #    res = self.dir_est.get_directions(starts, fragments, max_distance=float(10), mode=algo) #max_distance=float('inf')
+            #except AssertionError as err: # Cluster was not found for at least one primary
+            #    if self.verbose:
+            #        print('Error in direction reconstruction:', err)
+            #    res = [[0., 0., 0.] for _ in range(len(self.output['showers']))]
+
+            #for i, shower in enumerate(self.output['showers']):
+            #    shower.direction = res[i]
+            
+            # New method
             for i, shower in enumerate(self.output['showers']):
-                shower.direction = res[i]
+                direction = cluster_direction(torch.tensor(fragments[i]), torch.tensor(starts[i]), max_dist=-1, optimize=True)
+                shower.direction = np.array(direction)
 
         else:
             raise ValueError('Shower direction reconstruction method not recognized:', self.cfg['shower_direction'])
@@ -881,7 +890,7 @@ class Pi0Chain():
                 return
 
         elif self.cfg['shower_match'] == 'ppn':
-            tolerance = 20. # Defines the maximum distance between a point from the PPN and a POCA
+            tolerance = 40. # Defines the maximum distance between the first principal component of pairs of showers at the closest point // a point from the PPN and a POCA
                             # TODO: Read this form chain.config?
                             # TODO: Optimise this parameter
             # Pair closest shower vectors
@@ -1001,103 +1010,134 @@ class Pi0Chain():
         import math
         import numpy as np
 
-        self.true_info['ev_id']             = self.event['index'] # [-]
-        self.true_info['n_pi0']             = 0                   # [-]
-        self.true_info['n_gammas']          = 0                   # [-]
-        self.true_info['pi0_track_ids']     = []                  # [-]
-        self.true_info['pi0_ekin']          = []                  # [MeV]
-        self.true_info['pi0_mom']           = []                  # [MeV/c]
-        self.true_info['gamma_group_ids']   = []                  # [-]
-        self.true_info['gamma_mom']         = []                  # [MeV/c]
-        self.true_info['gamma_dir']         = []                  # [x,y,z]
-        self.true_info['gamma_first_step']  = []                  # [x,y,z] # Pos of 1st energy deposition
-        self.true_info['gamma_pos']         = []                  # [x,y,z] # pi0 -> gamma+gamma vertex
-        self.true_info['gamma_ekin']        = []                  # [MeV] # initial energy of photon,
-                                                                          # = np.sqrt(p.px()**2+p.py()**2+p.pz()**2)
-        self.true_info['gamma_edep']        = []                  # [MeV]
-        self.true_info['gamma_n_voxels']    = []                  # [-]
-        self.true_info['OOFV']              = []                  # [-]
-        self.true_info['gamma_angle']       = []                  # [rad]
-        self.true_info['pi0_mass']          = []                  # [MeV]
+        # Defined objects
+        self.true_info['ev_id']                         = self.event['index'] # [-]
+        self.true_info['n_pi0']                         = 0                   # [-]
+        self.true_info['n_gammas']                      = 0                   # [-]
+        
+        self.true_info['pi0_track_ids']                 = []                  # [-]
+        self.true_info['gamma_group_ids']               = []                  # [-]
+        self.true_info['shower_particle_ids']           = []                  # [-]
+        #self.true_info['gamma_ids_making_compton_scat']                      # [-] # List of photon ids which make compton scattering
+        
+        self.true_info['pi0_ekin']                      = []                  # [MeV]
+        self.true_info['pi0_mass']                      = []                  # [MeV/c2] # Calculated with energy of the gammas and their momenta (invariant mass = sqrt(Etot-ptot))
 
-        for particle in range(len(self.event['particles'][0])):
-            p = self.event['particles'][0][particle]
+        self.true_info['gamma_pos']                     = []                  # [x,y,z] # pi0 -> gamma+gamma vertex
+        self.true_info['gamma_dir']                     = []                  # [x,y,z]
+        self.true_info['gamma_mom']                     = []                  # [MeV/c]
+        self.true_info['gamma_ekin']                    = []                  # [MeV] # initial energy of photon, = np.sqrt(p.px()**2+p.py()**2+p.pz()**2)
+        self.true_info['gamma_edep']                    = []                  # [MeV]
+        #self.true_info['gamma_voxels']                                       # List lists (for every shower 1 list) of voxels containing edeps
+        self.true_info['gamma_n_voxels']                = []                  # [-] # Number of voxels containing edeps for each shower
+        
+        self.true_info['gamma_first_step']              = []                  # [x,y,z] # Pos of the photon's 1st energy deposition
+        #self.true_info['compton_electron_first_step']                        # [x,y,z] # Pos of the compton electron's 1st energy deposition
+        self.true_info['shower_first_edep']             = []                  # [x,y,z] # Pos of a shower's 1st (in time) energy deposition
+
+
+        self.true_info['OOFV']                          = []                  # [-] # If shower has edep(s) close to the LAr volume boundary.
+                                                                              # Note: If photon leaves detector without producing an edep, this is NOT classified as OOFV.
+                                                                              # For those events: Consider self.true_info['n_voxels']
+        self.true_info['gamma_angle']                   = []                  # [rad] # Opening angle between the two photons from a pi0 decay
+
+        # Define some lists for pi0s, daughter photons and their compton electrons
+        ids_of_true_photons           = [] # every photon has its own id
+        tids_of_true_photons          = [] # every photon has its own tid
+        parent_tids_of_true_photons   = [] # photons from the same pi0 decay have the same parent_track_id
+        ids_of_photons_making_compton = [] # True or False for every true photon
+        compton_electron_first_step   = [] # [x,y,z] coordinates of compton electrons first step
+        
+        # Get photons from pi0 decays:
+        # Note: Photons from the same pi0 have the same parent_track_id.
+        #       Every photon (from pi0 decay) has its own id.
+        #       Primary pi0s do not have id and track_id
+        for i, p in enumerate(self.event['particles'][0]):
             #print(p.dump())
             if p.parent_pdg_code() == 111 and p.pdg_code() == 22:
-                self.true_info['n_gammas'] += 1
-                if p.parent_track_id() not in self.true_info['pi0_track_ids']:
-                    self.true_info['n_pi0'] += 1
-                    self.true_info['pi0_track_ids'].append(p.parent_track_id())
-                    self.true_info['pi0_ekin'].append(p.energy_init())
-                    self.true_info['pi0_mom'].append([p.px(),p.py(),p.pz()])
-                    self.true_info['gamma_mom'].append([p.px(),p.py(),p.pz()])
-                    direction = [p.px(),p.py(),p.pz()]/np.linalg.norm([p.px(),p.py(),p.pz()])
-                    self.true_info['gamma_dir'].append(direction)
-                    first_step = [p.first_step().x(),p.first_step().y(),p.first_step().z()]
-                    self.true_info['gamma_first_step'].append(first_step)
-                    self.true_info['gamma_pos'].append([p.x(),p.y(),p.z()])
-                    self.true_info['gamma_ekin'].append(p.energy_init())
-                    self.true_info['gamma_edep'].append(p.energy_deposit())
-                else:
-                    # check if pi0_trackID corresponds to latest one (in order to not assign the photon to a wrong parent)
-                    if p.parent_track_id() == self.true_info['pi0_track_ids'][-1]:
-                        self.true_info['pi0_track_ids'].append(p.parent_track_id())
-                        self.true_info['gamma_mom'].append([p.px(),p.py(),p.pz()])
-                        direction = [p.px(),p.py(),p.pz()]/np.linalg.norm([p.px(),p.py(),p.pz()])
-                        self.true_info['gamma_dir'].append(direction)
-                        first_step = [p.first_step().x(),p.first_step().y(),p.first_step().z()]
-                        self.true_info['gamma_first_step'].append(first_step)
-                        self.true_info['gamma_pos'].append([p.x(),p.y(),p.z()])
-                        self.true_info['gamma_ekin'].append(p.energy_init())
-                        self.true_info['gamma_edep'].append(p.energy_deposit())
-
-                        # Costheta and pi0 mass
-                        dir_1 = self.true_info['gamma_dir'][-1]
-                        dir_2 = self.true_info['gamma_dir'][-2]
-                        costheta = np.dot(dir_1,dir_2)
-                        if abs(costheta) > 1.:
-                            print(' WARNING: costheta = np.dot(sh1.dir, sh2.dir) = ', costheta, ' > 1.')
-                            self.true_info['gamma_angle'].append(-9)
-                            self.true_info['gamma_angle'].append(-9)
-                            self.true_info['pi0_mass'].append(-9)
-                            self.true_info['pi0_mass'].append(-9)
+                ids_of_true_photons.append(p.id())
+                tids_of_true_photons.append(p.track_id())
+                parent_tids_of_true_photons.append(p.parent_track_id())
+                self.true_info['pi0_track_ids'].append(p.parent_track_id())
+                self.true_info['gamma_pos'].append([p.x(),p.y(),p.z()])
+                self.true_info['gamma_mom'].append([p.px(),p.py(),p.pz()])
+                self.true_info['gamma_dir'].append([p.px(),p.py(),p.pz()]/np.linalg.norm([p.px(),p.py(),p.pz()]))
+                self.true_info['gamma_ekin'].append(p.energy_init())
+                self.true_info['gamma_first_step'].append([p.first_step().x(),p.first_step().y(),p.first_step().z()]) #, p.first_step().t()])
+        self.true_info['n_pi0']    = len(np.unique(parent_tids_of_true_photons))
+        self.true_info['n_gammas'] = len(ids_of_true_photons)
+        if 2*self.true_info['n_pi0'] != self.true_info['n_gammas']:
+            print(' WARNING: The number of pi0 (', self.true_info['n_pi0'], ') does not match the corresponding number of photons (', self.true_info['n_gammas'], ')... [event:', self.event['index'], ']')
+        #assert 2*self.true_info['n_pi0'] == self.true_info['n_gammas'], " WARNING: The number of pi0 does not match the corresponding number of photons... "
+        
+        # Obtain pi0 kinematic variable
+        used_tids = []
+        if self.true_info['n_pi0'] > 0:
+            for i, p in enumerate(self.event['particles'][0]):
+                for r, idx1 in enumerate(parent_tids_of_true_photons):
+                    for s, idx2 in enumerate(parent_tids_of_true_photons):
+                        if not (s > r):
+                            continue
                         else:
-                            self.true_info['gamma_angle'].append(np.arccos(costheta))
-                            self.true_info['gamma_angle'].append(np.arccos(costheta))
-                            ekin_1 = self.true_info['gamma_ekin'][-1]
-                            ekin_2 = self.true_info['gamma_ekin'][-2]
-                            self.true_info['pi0_mass'].append(math.sqrt(2.*ekin_1*ekin_2*(1.-costheta)))
-                            self.true_info['pi0_mass'].append(math.sqrt(2.*ekin_1*ekin_2*(1.-costheta)))
-                    else:
-                        print('WARNING: Assigning a gamma to the wrong parent (event:', self.event['index'], ')')
-
-
-        # Produce list of lists with: group IDs of gamma showers
-        for particle in range(len(self.event['particles'][0])):
-            p = self.event['particles'][0][particle]
-            if p.parent_track_id() in self.true_info['pi0_track_ids'] and p.pdg_code() == 22:
-                self.true_info['gamma_group_ids'].append([p.group_id()])
-
-        # Produce list of lists with: particle IDs of gamma showers
+                            if idx1 == idx2 and idx1 not in used_tids:                             
+                                used_tids.append(idx1)
+                                # Test if invariant mass corresponds to pi0 mass (if not: likely to have matched wrong showers!)
+                                Etot = (self.true_info['gamma_ekin'][r]+self.true_info['gamma_ekin'][s])**2
+                                ptot = (self.true_info['gamma_mom'][r][0]+self.true_info['gamma_mom'][s][0])**2 +\
+                                       (self.true_info['gamma_mom'][r][1]+self.true_info['gamma_mom'][s][1])**2 +\
+                                       (self.true_info['gamma_mom'][r][2]+self.true_info['gamma_mom'][s][2])**2
+                                invariant_mass = np.sqrt(Etot-ptot)
+                                if invariant_mass < 0.95*134.9766 or invariant_mass > 1.05*134.9766:
+                                    print(' WARNING: Pi0 mass deviates > 5% from literature value. Likely to have matched two photons of different pi0s!! ')
+                                self.true_info['pi0_mass'].append(invariant_mass)
+                                self.true_info['pi0_ekin'].append(self.true_info['gamma_ekin'][r]+self.true_info['gamma_ekin'][s]-invariant_mass)
+                                #self.true_info['pi0_mom'].append() # TODO: Calculate it
+                                costheta = np.dot(self.true_info['gamma_dir'][s],self.true_info['gamma_dir'][r])
+                                if abs(costheta) <= 1.:
+                                    self.true_info['gamma_angle'].append(np.arccos(costheta)) # append twice, once for every true photon
+                                    self.true_info['gamma_angle'].append(np.arccos(costheta))
+                                else:
+                                    print(' WARNING: |costheta| > 1, cannot append true gamma_angle to the photons!! ')
+        
+        # Produce a list of n lists (n = n_gammas) with particle_IDs and group_IDs of each shower
         if self.true_info['n_gammas'] > 0:
-            self.true_info['gamma_particle_ids'] = [[] for _ in range(self.true_info['n_gammas'])]
-            # gamma_particle_ids is a list of n lists (n = number of gammas) with particle IDs of each shower
+            self.true_info['shower_particle_ids'] = [[] for _ in range(self.true_info['n_gammas'])]
+            self.true_info['shower_group_ids']    = [[] for _ in range(self.true_info['n_gammas'])]
             counter = 0
-            for particle in range(len(self.event['particles'][0])):
-                p = self.event['particles'][0][particle]
-                if p.parent_pdg_code() == 111 and p.pdg_code() == 22:
-                    self.true_info['gamma_particle_ids'][counter].append(p.id())
+            for i, p in enumerate(self.event['particles'][0]):
+                if p.parent_pdg_code() == 111 and p.pdg_code() == 22:             # p1 is a true photon
+                    self.true_info['shower_particle_ids'][counter].append(p.id())
                     counter += 1
-
-            for particle in range(len(self.event['particles'][0])):
-                p = self.event['particles'][0][particle]
+            for i, p in enumerate(self.event['particles'][0]):
                 for gamma in range(self.true_info['n_gammas']):
-                    if p.parent_id() in self.true_info['gamma_particle_ids'][gamma] and p.id() not in self.true_info['gamma_particle_ids'][gamma]:
-                        self.true_info['gamma_particle_ids'][gamma].append(p.id())
-        else:
-            self.true_info['gamma_particle_ids'] = []
-
-
+                    if p.parent_id() in self.true_info['shower_particle_ids'][gamma] and p.id() not in self.true_info['shower_particle_ids'][gamma]:
+                        self.true_info['shower_particle_ids'][gamma].append(p.id())
+            counter = 0
+            for i, p in enumerate(self.event['particles'][0]):
+                if p.track_id() in tids_of_true_photons: # and p.pdg_code() == 22:
+                    self.true_info['shower_group_ids'][counter].append(p.group_id())
+                    counter += 1
+        
+        # Test if photon makes compton scattering
+        for i, p in enumerate(self.event['particles'][0]):
+            if p.parent_pdg_code()==22 and p.parent_id() in ids_of_true_photons:
+                if p.parent_id() not in ids_of_photons_making_compton:
+                    ids_of_photons_making_compton.append(p.parent_id())
+                    compton_electron_first_step.append([p.first_step().x(),p.first_step().y(),p.first_step().z()]) #, p.first_step().t()])
+        self.true_info['gamma_ids_making_compton_scat'] = ids_of_photons_making_compton
+        self.true_info['compton_electron_first_step'] = compton_electron_first_step
+        
+        # Obtain shower's first (in time) energy deposit and define it as true shower's start position
+        for j, showers_particle_ids in enumerate(self.true_info['shower_particle_ids']):
+            min_time = float('inf')
+            first_step = [float('inf'), float('inf'), float('inf')]
+            for i, p in enumerate(self.event['particles'][0]):
+                if p.id() in showers_particle_ids:
+                    if p.first_step().t() > 0. and p.first_step().t() < min_time:
+                        min_time = p.first_step().t()
+                        first_step = [p.first_step().x(), p.first_step().y(), p.first_step().z()] # , p.first_step().t()
+            self.true_info['shower_first_edep'].append(first_step)
+        
         # Loop over all clusters and get voxels for every true gamma shower
         # Note: using parser 'parse_cluster3d_full', one can obtain a cluster via
         # clusters = self.event['cluster_label'] where the entries are
@@ -1107,7 +1147,7 @@ class Pi0Chain():
             # gamma_voxels is a list of n lists (n = number of gammas) with voxel coordinates of each shower
             clusters = self.event['cluster_label']
             for cluster_index, edep in enumerate(clusters):
-                for group_index, group in enumerate(self.true_info['gamma_group_ids']):
+                for group_index, group in enumerate(self.true_info['shower_group_ids']):
                     if edep[6] == group[0]:
                         self.true_info['gamma_voxels'][group_index].append([edep[0],edep[1],edep[2]])
             for index, gamma in enumerate(self.true_info['gamma_voxels']):
@@ -1120,12 +1160,14 @@ class Pi0Chain():
         # If at least one edep is OOFV: Put shower number to list self.output['OOFV']
         # This is relatively strict -> might want to add the shower to OOFV
         # only if a certain fraction of all edeps is OOFV
+        # TODO: Also add the shower number to OOFV if true_gamma.first_step is OOFV (otherwise it could happen that a true photon which leaves the LAr volume without edep is not OOFV)
         for shower_index, shower in enumerate(self.true_info['gamma_voxels']):
             for edep in range(len(shower)):
                 coordinate = np.array((shower[edep][0],shower[edep][1],shower[edep][2]))
                 if ( np.any(coordinate<self.cfg['fiducialize']) or np.any(coordinate>(767-self.cfg['fiducialize'])) ):
                     self.true_info['OOFV'].append(shower_index)
                     break
+        
         return
 
 
@@ -1243,17 +1285,39 @@ class Pi0Chain():
             graph_data[-1].name = 'Reconstructed pi0 decay vertices'
         except:
             pass
-
+        
+        '''
+        # Add true photons 1st steps
+        if len(self.true_info['gamma_first_step'])>0:
+            true_gammas_first_steps = self.true_info['gamma_first_step']
+            #print(' true_gammas_first_steps: ', true_gammas_first_steps)
+            graph_data += scatter_points(numpy.asarray(true_gammas_first_steps), markersize=5, color='magenta')
+            graph_data[-1].name = 'True photons 1st steps'
+        
+        # Add compton electrons 1st steps
+        if len(self.true_info['compton_electron_first_step'])>0:
+            compton_electrons_first_steps = self.true_info['compton_electron_first_step']
+            #print(' compton_electrons_first_steps: ', compton_electrons_first_steps)
+            graph_data += scatter_points(numpy.asarray(compton_electrons_first_steps), markersize=5, color='green')
+            graph_data[-1].name = 'True compton electrons 1st steps'
+        '''    
+        # Add shower's true 1st (in time) step
+        if len(self.true_info['shower_first_edep'])>0:
+            shower_first_edep = self.true_info['shower_first_edep']
+            #print(' shower_first_edep: ', shower_first_edep)
+            graph_data += scatter_points(numpy.asarray(shower_first_edep), markersize=5, color='red')
+            graph_data[-1].name = 'True showers 1st steps'
+            
         # Add points predicted by PPN
         if self.output['PPN_track_points']:
             points = np.array([i.ppns for i in self.output['PPN_track_points']])
             graph_data += scatter_points(points,markersize=4, color='purple')
             graph_data[-1].name = 'PPN track points'
+        '''
         if self.output['PPN_shower_points']:
             points = np.array([i.ppns for i in self.output['PPN_shower_points']])
             graph_data += scatter_points(points,markersize=4, color='purple')
             graph_data[-1].name = 'PPN shower points'
-        '''
         if self.output['PPN_michel_points']:
             points = np.array([i.ppns for i in self.output['PPN_michel_points']])
             graph_data += scatter_points(points,markersize=4, color='purple')
@@ -1268,14 +1332,26 @@ class Pi0Chain():
             graph_data[-1].name = 'PPN LEScatter points'
         '''
 
-        # Add true photon's directions            
+        '''
+        # Add true photon's directions (based on true pi0 decay vertex and true photon's 1st steps)
         if 'gamma_pos' in self.true_info and 'gamma_first_step' in self.true_info:
             for i, true_dir in enumerate(self.true_info['gamma_pos']):
                 vertex = self.true_info['gamma_pos'][i]
-                first_step = self.true_info['gamma_first_step'][i]
-                points = [vertex, first_step]
+                first_steps = self.true_info['gamma_first_step'][i]
+                points = [vertex, first_steps]
                 graph_data += scatter_points(np.array(points),markersize=4,color='blue')
                 graph_data[-1].name = 'True photon %i: vertex to first step' % i
+                graph_data[-1].mode = 'lines,markers'
+        '''
+        
+        # Add true photon's directions (based on true pi0 decay vertex and true photon's 1st (in time) edep)
+        if 'gamma_pos' in self.true_info and 'shower_first_edep' in self.true_info:
+            for i, true_dir in enumerate(self.true_info['gamma_pos']):
+                vertex = self.true_info['gamma_pos'][i]
+                first_edeps = self.true_info['shower_first_edep'][i]
+                points = [vertex, first_edeps]
+                graph_data += scatter_points(np.array(points),markersize=4,color='green')
+                graph_data[-1].name = 'True photon %i: vertex to first edep' % i
                 graph_data[-1].mode = 'lines,markers'
 
         colors = plotly.colors.qualitative.Light24
@@ -1283,8 +1359,8 @@ class Pi0Chain():
             points = energy[shower_mask][s.voxels]
             color = colors[i % (len(colors))]
             graph_data += scatter_points(points,markersize=2,color=color)
-            graph_data[-1].name = 'Shower %d (id=%d, edep=%.2f)' % (i,s.pid,s.energy)
-            #graph_data[-1].name = 'Shower %d (id=%d, edep=%.2f, start=[%.2f,%.2f,%.2f], dir=[%.2f,%.2f,%.2f])' % (i,s.pid,s.energy,s.start[0],s.start[1],s.start[2],s.direction[0],s.direction[1],s.direction[2])
+            #graph_data[-1].name = 'Shower %d (id=%d, edep=%.2f)' % (i,s.pid,s.energy)
+            graph_data[-1].name = 'Shower %d (id=%d, edep=%.2f, dir=[%.2f,%.2f,%.2f])' % (i,s.pid,s.energy,s.direction[0],s.direction[1],s.direction[2])
 
         if len(self.output['showers']):
 
