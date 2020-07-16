@@ -1346,9 +1346,7 @@ class Pi0Chain():
         counter = 0
         for i, p in enumerate(self.event['particles'][0]):
             #print(p.dump())
-            if p.pdg_code() == 11 and p.parent_pdg_code() == 0:
-                #print(' Electron: ')
-                #print(p.dump())            
+            if p.pdg_code() == 11 and p.parent_pdg_code() == 0:       
                 _pid        = int(p.id())
                 _group_id   = p.group_id()
                 _start      = [p.x(), p.y(), p.z()]
