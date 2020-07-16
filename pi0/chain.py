@@ -26,13 +26,68 @@ class Shower():
         self.group_pred = int(group_pred)
         
     def __str__(self):
-        return """ Shower  ID {}
+        return """
+        Shower ID  : {}
         Start point: ({:0.2f},{:0.2f},{:0.2f})
         Direction  : ({:0.2f},{:0.2f},{:0.2f})
         Voxel count: {}
         Energy     : {}
         Group_pred : {}
         """.format(self.pid, *self.start, *self.direction, len(self.voxels), self.energy, self.group_pred)
+
+class ElectronShower():
+    def __init__(self, pid=-1, group_id=-1, start=-np.ones(3), mom_init=-np.ones(3), direction=-np.ones(3), voxels=[], einit=-1, edeps=[], edep_tot=-1):
+        self.pid        = int(pid)
+        self.group_id   = int(group_id)
+        self.start      = start
+        self.mom_init   = mom_init
+        self.direction  = direction
+        self.voxels     = voxels
+        self.n_voxels   = len(self.voxels)
+        self.einit      = einit
+        self.edeps      = edeps
+        self.edep_tot   = edep_tot
+    
+    def __str__(self):
+        return """
+        Shower ID  : {}
+        Group ID   : {}
+        Start      : ({:0.2f},{:0.2f},{:0.2f})
+        Mom_init   : ({:0.2f},{:0.2f},{:0.2f})
+        Direction  : ({:0.2f},{:0.2f},{:0.2f})
+        Voxels     : {}
+        Voxel count: {}
+        E init     : {}
+        E deposits : {}
+        E dep tot  : {}
+        """.format(self.pid, self.group_id, *self.start, *self.mom_init, *self.direction, self.voxels, self.n_voxels, self.einit, self.edeps, self.edep_tot)
+    
+class PhotonShower():
+    def __init__(self, pid=-1, group_id=-1, start=-np.ones(3), mom_init=-np.ones(3), direction=-np.ones(3), voxels=[], einit=-1, edeps=[], edep_tot=-1):
+        self.pid        = int(pid)
+        self.group_id   = int(group_id)
+        self.start      = start
+        self.mom_init   = mom_init
+        self.direction  = direction
+        self.voxels     = voxels
+        self.n_voxels   = len(self.voxels)
+        self.einit      = einit
+        self.edeps      = edeps
+        self.edep_tot   = edep_tot
+    
+    def __str__(self):
+        return """
+        Shower ID  : {}
+        Group ID   : {}
+        Start      : ({:0.2f},{:0.2f},{:0.2f})
+        Mom_init   : ({:0.2f},{:0.2f},{:0.2f})
+        Direction  : ({:0.2f},{:0.2f},{:0.2f})
+        Voxels     : {}
+        Voxel count: {}
+        E init     : {}
+        E deposits : {}
+        E dep tot  : {}
+        """.format(self.pid, self.group_id, *self.start, *self.mom_init, *self.direction, self.voxels, self.n_voxels, self.einit, self.edeps, self.edep_tot)
 
 # TODO: Instead of having 5 classes for every semantic type, make one class 'PPN_Predictions' with all shower, track, michel, delta, LEScatter predictions
 class ShowerPoints():
@@ -254,6 +309,12 @@ class Pi0Chain():
 
         # Extract true information about pi0 -> gamma + gamma
         self.extract_true_information(event)
+        
+        # Find showers induced by (primary) electrons
+        self.find_true_electron_showers(event)
+        
+        # Find showers induced by photons from a pi0 decay
+        self.find_true_photon_showers(event)
 
         # Filter out ghosts
         self.filter_ghosts(event)
@@ -1035,7 +1096,6 @@ class Pi0Chain():
         #self.true_info['compton_electron_first_step']                        # [x,y,z] # Pos of the compton electron's 1st energy deposition
         self.true_info['shower_first_edep']             = []                  # [x,y,z] # Pos of a shower's 1st (in time) energy deposition
 
-
         self.true_info['OOFV']                          = []                  # [-] # If shower has edep(s) close to the LAr volume boundary.
                                                                               # Note: If photon leaves detector without producing an edep, this is NOT classified as OOFV.
                                                                               # For those events: Consider self.true_info['n_voxels']
@@ -1141,7 +1201,7 @@ class Pi0Chain():
         # Loop over all clusters and get voxels for every true gamma shower
         # Note: using parser 'parse_cluster3d_full', one can obtain a cluster via
         # clusters = self.event['cluster_label'] where the entries are
-        # x,y,z,batch_id,voxel_value,cluster_id,group_id,semantic_type   
+        # x,y,z,batch_id,voxel_value,cluster_id,group_id,semantic_type
         if self.true_info['n_gammas'] > 0:
             self.true_info['gamma_voxels'] = [[] for _ in range(self.true_info['n_gammas'])]
             # gamma_voxels is a list of n lists (n = number of gammas) with voxel coordinates of each shower
@@ -1255,6 +1315,131 @@ class Pi0Chain():
             self.reco_info['gamma_angle'].append(np.arccos(costheta))
             self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
             self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
+        return
+    
+    def find_true_electron_showers(self, event):
+        '''
+        Obtain true information about showers induced by (primary) electrons and dump it to self.output['electronShowers'].
+        '''
+        electron_showers = []
+
+        # Get group_id of shower produced by electron
+        group_ids = []
+        for i, p in enumerate(self.event['particles'][0]):
+            if p.pdg_code() == 11 and p.parent_pdg_code() == 0:
+                group_ids.append(p.group_id())
+        
+        # Loop over all clusters and get voxels for every electron induced shower
+        # Note: using parser 'parse_cluster3d_full', one can obtain a cluster via
+        # clusters = self.event['cluster_label'] where the entries are
+        # x,y,z,batch_id,voxel_value,cluster_id,group_id,semantic_type
+        voxels = [[] for _ in range(len(group_ids))]
+        edeps  = [[] for _ in range(len(group_ids))]
+        clusters = self.event['cluster_label']
+        for cluster_index, edep in enumerate(clusters):
+            for group_index, group in enumerate(group_ids):
+                if edep[6] == group:
+                    voxels[group_index].append([edep[0],edep[1],edep[2]])
+                    edeps[group_index].append(edep[4])
+        
+        # Assign the electron induced shower's properties
+        counter = 0
+        for i, p in enumerate(self.event['particles'][0]):
+            #print(p.dump())
+            if p.pdg_code() == 11 and p.parent_pdg_code() == 0:
+                #print(' Electron: ')
+                #print(p.dump())            
+                _pid        = int(p.id())
+                _group_id   = p.group_id()
+                _start      = [p.x(), p.y(), p.z()]
+                _mom_init   = [p.px(), p.py(), p.pz()]
+                _dir        = [p.px(), p.py(), p.pz()]/np.linalg.norm([p.px(), p.py(), p.pz()])
+                _voxels     = voxels[counter]
+                _einit      = p.energy_init()
+                _edeps      = edeps[counter]
+                _edep_tot   = np.sum(edeps[counter])
+                # TODO: check that shower starts within FV, add attribute if needed
+                # TODO: check that only edeps within LAr volume are counted
+                electron_showers.append(ElectronShower(pid=_pid,group_id=_group_id,start=_start,mom_init=_mom_init,direction=_dir,voxels=_voxels,einit=_einit,edeps=_edeps,edep_tot=_edep_tot))
+                counter += 1
+        self.output['electronShowers'] = electron_showers
+        return
+        
+    def find_true_photon_showers(self, event):
+        '''
+        Obtain true information about showers induced by photons from a pi0 decay and dump it to self.output['photonShowers'].
+        '''
+        photon_showers = []
+        
+        # First, produce list of n lists (n=number of photons from pi0 decay) with ids and track_ids
+        ids_of_true_photons  = []
+        tids_of_true_photons = []
+        group_ids            = []
+        for i, p in enumerate(self.event['particles'][0]):
+            if p.parent_pdg_code() == 111 and p.pdg_code() == 22:
+                ids_of_true_photons.append(p.id())
+                tids_of_true_photons.append(p.track_id())
+                group_ids.append(p.group_id())
+        
+        # Loop over all clusters and get voxels for every photon induced shower
+        # Note: using parser 'parse_cluster3d_full', one can obtain a cluster via
+        # clusters = self.event['cluster_label'] where the entries are
+        # x,y,z,batch_id,voxel_value,cluster_id,group_id,semantic_type
+        voxels = [[] for _ in range(len(group_ids))]
+        edeps  = [[] for _ in range(len(group_ids))]
+        clusters = self.event['cluster_label']
+        for cluster_index, edep in enumerate(clusters):
+            for group_index, group in enumerate(group_ids):
+                if edep[6] == group:
+                    voxels[group_index].append([edep[0],edep[1],edep[2]])
+                    edeps[group_index].append(edep[4])
+
+        # Produce list of n lists (n=number of photons from pi0 decay) with all ids and track_ids of particles belonging to the same shower
+        ids_of_particles_in_shower  = [[ID] for counter, ID in enumerate(ids_of_true_photons)]
+        tids_of_particles_in_shower = [[ID] for counter, ID in enumerate(ids_of_true_photons)]
+        for sh_index in range(len(ids_of_true_photons)):
+            for i, p in enumerate(self.event['particles'][0]):
+                if p.parent_id() in ids_of_particles_in_shower[sh_index] and p.id() not in ids_of_particles_in_shower[sh_index]:
+                    ids_of_particles_in_shower[sh_index].append(p.id())
+                if p.parent_track_id() in tids_of_particles_in_shower[sh_index] and p.track_id() not in tids_of_particles_in_shower[sh_index]:
+                    tids_of_particles_in_shower[sh_index].append(p.track_id())
+        #print(' ids_of_particles_in_shower:  ', ids_of_particles_in_shower)
+        #print(' tids_of_particles_in_shower: ', tids_of_particles_in_shower)
+
+        # Obtain shower's first (in time) energy deposit and define it as true shower's start position
+        showers_start = []
+        for j, IDs in enumerate(ids_of_particles_in_shower):
+            min_time = float('inf')
+            first_step = [float('inf'), float('inf'), float('inf')]
+            for i, p in enumerate(self.event['particles'][0]):
+                if p.id() in IDs:
+                    if p.first_step().t() > 0. and p.first_step().t() < min_time:
+                        min_time = p.first_step().t()
+                        first_step = [p.first_step().x(), p.first_step().y(), p.first_step().z()] # , p.first_step().t()
+            showers_start.append(first_step)
+        #print(' showers_start:               ', showers_start)
+
+        # Assign the photon induced shower's properties
+        counter = 0
+        for i, ID in enumerate(ids_of_true_photons):
+            for j, p in enumerate(self.event['particles'][0]):
+                if p.id() == ID:
+                    _pid        = int(p.id())
+                    _group_id   = p.group_id()
+                    _start      = showers_start[i]
+                    _mom_init   = [p.px(), p.py(), p.pz()]
+                    _dir        = [p.px(), p.py(), p.pz()]/np.linalg.norm([p.px(), p.py(), p.pz()])
+                    _voxels     = voxels[counter] # TODO: implement
+                    _einit      = p.energy_init()
+                    _edeps      = edeps[counter]
+                    _edep_tot   = np.sum(edeps[counter])
+                    # TODO: check that shower starts within FV, add attribute if needed
+                    # TODO: check that only edeps within LAr volume are counted
+                    photon_showers.append(PhotonShower(pid=_pid,group_id=_group_id,start=_start,mom_init=_mom_init,direction=_dir,voxels=_voxels,einit=_einit,edeps=_edeps,edep_tot=_edep_tot))
+                    counter += 1
+                    break
+        self.output['photonShowers'] = photon_showers
+        return
 
 
     def draw(self,**kargs):

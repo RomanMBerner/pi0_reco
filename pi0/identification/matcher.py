@@ -46,7 +46,7 @@ class Pi0Matcher():
             for point in ppn_track_points[0]:
                 ppns.append([point.ppns[0], point.ppns[1], point.ppns[2]])
             
-            tolerance_POCA_to_PPN = 30. # TODO: READ FROM CONFIG FILE OR FEED IN find_matches_function // CLEAN UP ALL TOLERANCE PARAMETERS!
+            tolerance_POCA_to_PPN = 30. # TODO: READ FROM CONFIG FILE OR FEED IN find_matches_function
             
             vertex_candidates = self.select_POCAs_close_to_PPNs(POCAs, ppns, tolerance_POCA_to_PPN)
             if len(vertex_candidates)==0:
