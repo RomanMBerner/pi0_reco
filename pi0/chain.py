@@ -18,11 +18,11 @@ from mlreco.utils.gnn.cluster import cluster_direction
 # Class that contains all the shower information
 class Shower():
     def __init__(self, start=-np.ones(3), direction=-np.ones(3), voxels=[], energy=-1., pid=-1, group_pred=-1):
-        self.start = start
-        self.direction = direction
-        self.voxels = voxels
-        self.energy = energy
-        self.pid = int(pid)
+        self.start      = start
+        self.direction  = direction
+        self.voxels     = voxels
+        self.energy     = energy
+        self.pid        = int(pid)
         self.group_pred = int(group_pred)
         
     def __str__(self):
@@ -35,7 +35,7 @@ class Shower():
         Group_pred : {}
         """.format(self.pid, *self.start, *self.direction, len(self.voxels), self.energy, self.group_pred)
 
-class ElectronShower():
+class ElectronShower(): # Including positron induced showers
     def __init__(self, pid=-1, group_id=-1, start=-np.ones(3), mom_init=-np.ones(3), direction=-np.ones(3), voxels=[], einit=-1, edeps=[], edep_tot=-1):
         self.pid        = int(pid)
         self.group_id   = int(group_id)
@@ -1126,9 +1126,6 @@ class Pi0Chain():
                 self.true_info['gamma_first_step'].append([p.first_step().x(),p.first_step().y(),p.first_step().z()]) #, p.first_step().t()])
         self.true_info['n_pi0']    = len(np.unique(parent_tids_of_true_photons))
         self.true_info['n_gammas'] = len(ids_of_true_photons)
-        if 2*self.true_info['n_pi0'] != self.true_info['n_gammas']:
-            print(' WARNING: The number of pi0 (', self.true_info['n_pi0'], ') does not match the corresponding number of photons (', self.true_info['n_gammas'], ')... [event:', self.event['index'], ']')
-        #assert 2*self.true_info['n_pi0'] == self.true_info['n_gammas'], " WARNING: The number of pi0 does not match the corresponding number of photons... "
         
         # Obtain pi0 kinematic variable
         used_tids = []
@@ -1198,18 +1195,21 @@ class Pi0Chain():
                         first_step = [p.first_step().x(), p.first_step().y(), p.first_step().z()] # , p.first_step().t()
             self.true_info['shower_first_edep'].append(first_step)
         
-        # Loop over all clusters and get voxels for every true gamma shower
+        # Loop over all clusters and get voxels and total deposited energy for every true gamma shower
         # Note: using parser 'parse_cluster3d_full', one can obtain a cluster via
         # clusters = self.event['cluster_label'] where the entries are
         # x,y,z,batch_id,voxel_value,cluster_id,group_id,semantic_type
         if self.true_info['n_gammas'] > 0:
             self.true_info['gamma_voxels'] = [[] for _ in range(self.true_info['n_gammas'])]
+            self.true_info['gamma_edep']   = [0. for _ in range(self.true_info['n_gammas'])]
             # gamma_voxels is a list of n lists (n = number of gammas) with voxel coordinates of each shower
             clusters = self.event['cluster_label']
             for cluster_index, edep in enumerate(clusters):
                 for group_index, group in enumerate(self.true_info['shower_group_ids']):
+                    summed_edep = 0.
                     if edep[6] == group[0]:
                         self.true_info['gamma_voxels'][group_index].append([edep[0],edep[1],edep[2]])
+                        self.true_info['gamma_edep'][group_index] += edep[4]
             for index, gamma in enumerate(self.true_info['gamma_voxels']):
                 self.true_info['gamma_n_voxels'].append(len(self.true_info['gamma_voxels'][index]))
         else:
@@ -1326,7 +1326,7 @@ class Pi0Chain():
         # Get group_id of shower produced by electron
         group_ids = []
         for i, p in enumerate(self.event['particles'][0]):
-            if p.pdg_code() == 11 and p.parent_pdg_code() == 0:
+            if (p.pdg_code() == 11 or p.pdg_code() == -11) and p.parent_pdg_code() == 0:
                 group_ids.append(p.group_id())
         
         # Loop over all clusters and get voxels for every electron induced shower
@@ -1346,7 +1346,7 @@ class Pi0Chain():
         counter = 0
         for i, p in enumerate(self.event['particles'][0]):
             #print(p.dump())
-            if p.pdg_code() == 11 and p.parent_pdg_code() == 0:       
+            if (p.pdg_code() == 11 or p.pdg_code() == -11) and p.parent_pdg_code() == 0:       
                 _pid        = int(p.id())
                 _group_id   = p.group_id()
                 _start      = [p.x(), p.y(), p.z()]
@@ -1369,7 +1369,7 @@ class Pi0Chain():
         '''
         photon_showers = []
         
-        # First, produce list of n lists (n=number of photons from pi0 decay) with ids and track_ids
+        # First, produce list of n lists (n=number of photons from pi0 decay) with ids, track_ids and group_ids
         ids_of_true_photons  = []
         tids_of_true_photons = []
         group_ids            = []
@@ -1378,6 +1378,9 @@ class Pi0Chain():
                 ids_of_true_photons.append(p.id())
                 tids_of_true_photons.append(p.track_id())
                 group_ids.append(p.group_id())
+        #print(' ids_of_true_photons:           ', ids_of_true_photons)
+        #print(' tids_of_true_photons:          ', tids_of_true_photons)
+        #print(' group_ids:                     ', group_ids)
         
         # Loop over all clusters and get voxels for every photon induced shower
         # Note: using parser 'parse_cluster3d_full', one can obtain a cluster via
@@ -1401,8 +1404,30 @@ class Pi0Chain():
                     ids_of_particles_in_shower[sh_index].append(p.id())
                 if p.parent_track_id() in tids_of_particles_in_shower[sh_index] and p.track_id() not in tids_of_particles_in_shower[sh_index]:
                     tids_of_particles_in_shower[sh_index].append(p.track_id())
-        #print(' ids_of_particles_in_shower:  ', ids_of_particles_in_shower)
-        #print(' tids_of_particles_in_shower: ', tids_of_particles_in_shower)
+        #print(' ids_of_particles_in_shower:    ', ids_of_particles_in_shower)
+        #print(' tids_of_particles_in_shower:   ', tids_of_particles_in_shower)
+        
+        
+        # Test if photon makes compton scattering
+        #ids_of_photons_making_compton = []
+        #for i, p in enumerate(self.event['particles'][0]):
+        #    if p.parent_id() in ids_of_true_photons:
+        #        print(' PARENT (', p.parent_id(), ') IN ids_of_true_photons... ')
+        #        if p.parent_id() not in ids_of_photons_making_compton:
+        #            ids_of_photons_making_compton.append(p.parent_id())
+        #            print(' MAKING COMPTON! ')
+        #            print(p.dump())
+        #            print(' p.id:              ', p.id())
+        #            print(' p.track_id:        ', p.track_id())
+        #            print(' p.group_id:        ', p.group_id())
+        #            print(' p.pdg_code:        ', p.pdg_code())
+        #            print(' p.parent_id:       ', p.parent_id())
+        #            print(' p.parent_track_id: ', p.parent_track_id())
+        #            print(' p.parent_pdg_code: ', p.parent_pdg_code())
+        #            print(' p.first_step: \t x: %.2f \t y: %.2f \t z: %.2f \t t: %.2f' %(p.first_step().x(), p.first_step().y(), p.first_step().z(), p.first_step().t()))
+        #            compton_electron_first_step.append([p.first_step().x(),p.first_step().y(),p.first_step().z()]) #, p.first_step().t()])
+        #print(' ids_of_photons_making_compton: ', tids_of_particles_in_shower)
+
 
         # Obtain shower's first (in time) energy deposit and define it as true shower's start position
         showers_start = []
@@ -1411,11 +1436,11 @@ class Pi0Chain():
             first_step = [float('inf'), float('inf'), float('inf')]
             for i, p in enumerate(self.event['particles'][0]):
                 if p.id() in IDs:
+                    #print(' p.first_step: \t x: %.2f \t y: %.2f \t z: %.2f \t t: %.2f' %(p.first_step().x(), p.first_step().y(), p.first_step().z(), p.first_step().t()))
                     if p.first_step().t() > 0. and p.first_step().t() < min_time:
                         min_time = p.first_step().t()
                         first_step = [p.first_step().x(), p.first_step().y(), p.first_step().z()] # , p.first_step().t()
             showers_start.append(first_step)
-        #print(' showers_start:               ', showers_start)
 
         # Assign the photon induced shower's properties
         counter = 0
@@ -1427,7 +1452,7 @@ class Pi0Chain():
                     _start      = showers_start[i]
                     _mom_init   = [p.px(), p.py(), p.pz()]
                     _dir        = [p.px(), p.py(), p.pz()]/np.linalg.norm([p.px(), p.py(), p.pz()])
-                    _voxels     = voxels[counter] # TODO: implement
+                    _voxels     = voxels[counter]
                     _einit      = p.energy_init()
                     _edeps      = edeps[counter]
                     _edep_tot   = np.sum(edeps[counter])
@@ -1487,9 +1512,14 @@ class Pi0Chain():
         # Add shower's true 1st (in time) step
         if len(self.true_info['shower_first_edep'])>0:
             shower_first_edep = self.true_info['shower_first_edep']
-            #print(' shower_first_edep: ', shower_first_edep)
+            print(' shower_first_edep: ', shower_first_edep)
             graph_data += scatter_points(numpy.asarray(shower_first_edep), markersize=5, color='red')
             graph_data[-1].name = 'True showers 1st steps'
+
+        # Add manually defined 3D points
+        #points = [[326.5, 597.8, 285.5],[325.2, 584.6, 312.3]]
+        #graph_data += scatter_points(numpy.asarray(points),markersize=4, color='green')
+        #graph_data[-1].name = 'Manually defined points'
             
         # Add points predicted by PPN
         if self.output['PPN_track_points']:
