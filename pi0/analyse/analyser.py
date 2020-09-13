@@ -3,7 +3,18 @@ import numpy as np
 
 
 class ElectronShower(): # Including positron induced showers
-    def __init__(self, pid=-1, group_id=-1, start=-np.ones(4), first_step=-np.ones(4), first_edep=-np.ones(4), mom_init=-np.ones(3), direction=-np.ones(3), voxels=[], einit=-1, edeps=[], edep_tot=-1):
+    def __init__(self,
+                 pid=-1,
+                 group_id=-1,
+                 start=-np.ones(4),
+                 first_step=-np.ones(4),
+                 first_edep=-np.ones(4),
+                 mom_init=-np.ones(3),
+                 direction=-np.ones(3),
+                 voxels=[],
+                 einit=-1,
+                 edeps=[],
+                 edep_tot=-1):
         self.pid        = int(pid)
         self.group_id   = int(group_id)
         self.start      = start      # creation vertex position (x,y,z,t)
@@ -35,7 +46,18 @@ class ElectronShower(): # Including positron induced showers
 
 
 class PhotonShower(): # Including photons which make Compton Scattering
-    def __init__(self, pid=-1, group_id=-1, start=-np.ones(4), first_step=-np.ones(4), first_edep=-np.ones(4), mom_init=-np.ones(3), direction=-np.ones(3), voxels=[], einit=-1, edeps=[], edep_tot=-1):
+    def __init__(self,
+                 pid=-1,
+                 group_id=-1,
+                 start=-np.ones(4),
+                 first_step=-np.ones(4),
+                 first_edep=-np.ones(4),
+                 mom_init=-np.ones(3),
+                 direction=-np.ones(3),
+                 voxels=[],
+                 einit=-1,
+                 edeps=[],
+                 edep_tot=-1):
         self.pid        = int(pid)
         self.group_id   = int(group_id)
         self.start      = start      # creation vertex position (x,y,z,t)
@@ -67,7 +89,18 @@ class PhotonShower(): # Including photons which make Compton Scattering
 
 
 class ComptonShower(): # Only photon induced showers which make Compton Scattering
-    def __init__(self, pid=-1, group_id=-1, start=-np.ones(4), first_step=-np.ones(4), first_edep=-np.ones(4), mom_init=-np.ones(3), direction=-np.ones(3), voxels=[], einit=-1, edeps=[], edep_tot=-1):
+    def __init__(self,
+                 pid=-1,
+                 group_id=-1,
+                 start=-np.ones(4),
+                 first_step=-np.ones(4),
+                 first_edep=-np.ones(4),
+                 mom_init=-np.ones(3),
+                 direction=-np.ones(3),
+                 voxels=[],
+                 einit=-1,
+                 edeps=[],
+                 edep_tot=-1):
         self.pid        = int(pid)
         self.group_id   = int(group_id)
         self.start      = start      # creation vertex position (x,y,z,t)
@@ -100,37 +133,68 @@ class ComptonShower(): # Only photon induced showers which make Compton Scatteri
 
 class Analyser():
     
+    def initialize_true(self):
+        self.true_info = {}
+
+        self.true_info['ev_id']                          = -1 # [-]
+        self.true_info['n_pi0']                          = 0  # [-]
+        self.true_info['n_gammas']                       = 0  # [-]
+        self.true_info['pi0_track_ids']                  = [] # [-]
+        self.true_info['gamma_group_ids']                = [] # [-]
+        self.true_info['shower_particle_ids']            = [] # [-]
+        #self.true_info['gamma_ids_making_compton_scat'] = [] # [-]      # List of photon ids which make compton scattering
+        self.true_info['pi0_ekin']                       = [] # [MeV]
+        self.true_info['pi0_mass']                       = [] # [MeV/c2] # Calculated with energy of the gammas and their momenta (invariant mass = sqrt(Etot-ptot))
+        self.true_info['gamma_pos']                      = [] # [x,y,z]  # pi0 -> gamma+gamma vertex
+        self.true_info['gamma_dir']                      = [] # [x,y,z]
+        self.true_info['gamma_mom']                      = [] # [MeV/c]
+        self.true_info['gamma_ekin']                     = [] # [MeV]    # initial energy of photon, = np.sqrt(p.px()**2+p.py()**2+p.pz()**2)
+        self.true_info['gamma_edep']                     = [] # [MeV]
+        #self.true_info['gamma_voxels']                  = [] # [-]      # List lists (for every shower 1 list) of voxels containing edeps
+        self.true_info['gamma_n_voxels']                 = [] # [-]      # Number of voxels containing edeps for each shower
+        self.true_info['gamma_first_step']               = [] # [x,y,z]  # Pos of the photon's 1st energy deposition
+        #self.true_info['compton_electron_first_step']   = [] # [x,y,z]  # Pos of the compton electron's 1st energy deposition
+        self.true_info['shower_first_edep']              = [] # [x,y,z]  # Pos of a shower's 1st (in time) energy deposition
+        self.true_info['gamma_angle']                    = [] # [rad]    # Opening angle between the two photons from a true pi0 decay
+        self.true_info['OOFV']                           = [] # [-]      # If shower has >0 edep(s) close to the LAr volume boundary.
+                                                                         # Note: If photon leaves detector without producing an edep, this is NOT classified as OOFV.
+                                                                         # For those events: Consider self.true_info['n_voxels']
+        return
+    
+    
+    def initialize_reco(self):
+        self.reco_info = {}
+        
+        self.reco_info['ev_id']                          = -1 # [-]
+        self.reco_info['n_pi0']                          = 0  # [-]
+        self.reco_info['n_gammas']                       = 0  # [-]
+        self.reco_info['matches']                        = [] # [-]      # pairs of gamma indices for reconstructed pi0s
+        self.reco_info['gamma_mom']                      = [] # [MeV/c]
+        self.reco_info['gamma_dir']                      = [] # [x,y,z]
+        self.reco_info['gamma_start']                    = [] # [x,y,z]  # pi0 -> gamma+gamma vertex
+        self.reco_info['gamma_edep']                     = [] # [MeV]
+        self.reco_info['gamma_pid']                      = [] # [-]
+        self.reco_info['gamma_voxels_mask']              = [] # [-]
+        self.reco_info['gamma_n_voxels_mask']            = [] # [-]
+        self.reco_info['gamma_voxels']                   = [] # [-]
+        self.reco_info['gamma_n_voxels']                 = [] # [-]
+        self.reco_info['gamma_angle']                    = [] # [rad]    # Opening angle between the two photons from a reco pi0 decay
+        self.reco_info['pi0_mass']                       = [] # [MeV/c2] # Reconstructed mass of the reco pi0
+        self.reco_info['OOFV']                           = [] # [-]      # If shower has >0 edep(s) close to the LAr volume boundary.
+                                                                         # Note: If photon leaves detector without producing an edep, this is NOT classified as OOFV.
+                                                                         # For those events: Consider self.true_info['n_voxels']
+        return
+    
+    
     def extract_true_information(self, event):
         '''
         Obtain true informations about pi0s and gammas originated from pi0 decays and dump
         it to self.true_info['<variable>']
         '''
         
-        # Defined objects
-        self.true_info['ev_id']                         = self.event['index'] # [-]
-        self.true_info['n_pi0']                         = 0                   # [-]
-        self.true_info['n_gammas']                      = 0                   # [-]
-        self.true_info['pi0_track_ids']                 = []                  # [-]
-        self.true_info['gamma_group_ids']               = []                  # [-]
-        self.true_info['shower_particle_ids']           = []                  # [-]
-        #self.true_info['gamma_ids_making_compton_scat']                      # [-] # List of photon ids which make compton scattering
-        self.true_info['pi0_ekin']                      = []                  # [MeV]
-        self.true_info['pi0_mass']                      = []                  # [MeV/c2] # Calculated with energy of the gammas and their momenta (invariant mass = sqrt(Etot-ptot))
-        self.true_info['gamma_pos']                     = []                  # [x,y,z] # pi0 -> gamma+gamma vertex
-        self.true_info['gamma_dir']                     = []                  # [x,y,z]
-        self.true_info['gamma_mom']                     = []                  # [MeV/c]
-        self.true_info['gamma_ekin']                    = []                  # [MeV] # initial energy of photon, = np.sqrt(p.px()**2+p.py()**2+p.pz()**2)
-        self.true_info['gamma_edep']                    = []                  # [MeV]
-        #self.true_info['gamma_voxels']                                       # List lists (for every shower 1 list) of voxels containing edeps
-        self.true_info['gamma_n_voxels']                = []                  # [-] # Number of voxels containing edeps for each shower
-        self.true_info['gamma_first_step']              = []                  # [x,y,z] # Pos of the photon's 1st energy deposition
-        #self.true_info['compton_electron_first_step']                        # [x,y,z] # Pos of the compton electron's 1st energy deposition
-        self.true_info['shower_first_edep']             = []                  # [x,y,z] # Pos of a shower's 1st (in time) energy deposition
-        self.true_info['OOFV']                          = []                  # [-] # If shower has edep(s) close to the LAr volume boundary.
-                                                                              # Note: If photon leaves detector without producing an edep, this is NOT classified as OOFV.
-                                                                              # For those events: Consider self.true_info['n_voxels']
-        self.true_info['gamma_angle']                   = []                  # [rad] # Opening angle between the two photons from a pi0 decay
-
+        #print(' self.true_info[ev_id]: ', self.true_info['ev_id'])
+        self.true_info['ev_id'] = self.event['index']
+        
         # Define some lists for pi0s, daughter photons and their compton electrons
         ids_of_true_photons           = [] # every photon has its own id
         tids_of_true_photons          = [] # every photon has its own tid
@@ -256,6 +320,80 @@ class Analyser():
                 if ( np.any(coordinate<self.cfg['fiducialize']) or np.any(coordinate>(767-self.cfg['fiducialize'])) ):
                     self.true_info['OOFV'].append(shower_index)
                     break
+        return
+    
+    
+    def extract_reco_information(self, event):
+        '''
+        Obtain reconstructed informations about pi0s and gammas originated from pi0 decays and dump
+        it to self.reco_info['<variable>']
+        '''
+        
+        self.reco_info['ev_id']    = self.event['index']
+        self.reco_info['n_pi0']    = len(self.output['matches'])
+        self.reco_info['n_gammas'] = 2.*len(self.output['matches'])
+        self.reco_info['OOFV']     = self.output['OOFV']
+
+        showers = self.output['showers']
+        
+        # Note: match = if two showers point to the same point and this point is close to a track
+        for match in range(self.reco_info['n_pi0']):
+            match_1 = self.output['matches'][match][0]
+            match_2 = self.output['matches'][match][1]               
+            self.reco_info['matches'].append(match_1)
+            self.reco_info['matches'].append(match_2)
+            self.reco_info['gamma_mom'].append(np.array(showers[match_1].direction*showers[match_1].energy))
+            self.reco_info['gamma_mom'].append(np.array(showers[match_2].direction*showers[match_2].energy))
+            self.reco_info['gamma_dir'].append(np.array(showers[match_1].direction))
+            self.reco_info['gamma_dir'].append(np.array(showers[match_2].direction))
+            self.reco_info['gamma_start'].append(np.array(showers[match_1].start))
+            self.reco_info['gamma_start'].append(np.array(showers[match_2].start))
+            self.reco_info['gamma_edep'].append(showers[match_1].energy)
+            self.reco_info['gamma_edep'].append(showers[match_2].energy)
+            self.reco_info['gamma_pid'].append(showers[match_1].pid)
+            self.reco_info['gamma_pid'].append(showers[match_2].pid)
+            self.reco_info['gamma_voxels_mask'].append(np.array(showers[match_1].voxels))
+            self.reco_info['gamma_voxels_mask'].append(np.array(showers[match_2].voxels))
+            self.reco_info['gamma_n_voxels_mask'].append(showers[match_1].voxels.size)
+            self.reco_info['gamma_n_voxels_mask'].append(showers[match_2].voxels.size)
+
+            # Obtain the showers edeps (x,y,z,batch_id,energy_deposition)
+            mask = self.output['shower_mask']                           # mask for all edeps classified as shower
+            voxels_1 = self.output['showers'][match_1].voxels           # indices in the mask for the 1st match
+            voxels_2 = self.output['showers'][match_2].voxels           # indices in the mask for the 2nd match
+            edeps_1 = self.output['energy'][mask][voxels_1]             # all edeps for the 1st match
+            edeps_2 = self.output['energy'][mask][voxels_2]             # all edeps for the 2nd match
+            self.reco_info['gamma_voxels'].append(np.array(edeps_1))
+            self.reco_info['gamma_voxels'].append(np.array(edeps_2))
+            self.reco_info['gamma_n_voxels'].append(len(edeps_1))
+            self.reco_info['gamma_n_voxels'].append(len(edeps_2))
+
+        # Reconstructed angle and pi0 mass
+        for match in self.output['matches']:
+            idx1, idx2 = match
+            s1, s2 = self.output['showers'][idx1], self.output['showers'][idx2]
+            e1, e2 = s1.energy, s2.energy
+            t1, t2 = s1.direction, s2.direction
+            #if np.any(np.isnan(t1)) or np.any(np.isnan(t2)):
+            #    print(' WARNING: shower direction not assigned: \t dir_1: ', t1, ' \t dir_2: ', t2)
+            #    print(' \t -> set costheta = 1 and pi0_mass = 0 ')
+            #    costheta = 1.
+            #else:
+            try:
+                costheta = np.dot(t1, t2)
+            except:
+                print(' WARNING: shower direction not assigned: \t dir_1: ', t1, ' \t dir_2: ', t2)
+                print(' \t -> set costheta = 1 and pi0_mass = 0 ')
+                costheta = 1.
+                
+            if abs(costheta) > 1.:
+                print(' WARNING: costheta = np.dot(sh1.dir, sh2.dir) = ', costheta, ' > 1.')
+                print(' \t -> set costheta = 1 and pi0_mass = 0 ')
+                costheta = 1
+            self.reco_info['gamma_angle'].append(np.arccos(costheta))
+            self.reco_info['gamma_angle'].append(np.arccos(costheta))
+            self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
+            self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
         return
     
     
