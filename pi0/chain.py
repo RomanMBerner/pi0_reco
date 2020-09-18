@@ -97,7 +97,7 @@ class Pi0Chain():
     IDX_CLUSTER_ID = -3
 
 
-    def __init__(self, io_cfg, chain_cfg, verbose=True):
+    def __init__(self, io_cfg, chain_cfg, verbose=False):
         '''
         Initializes the chain from the configuration file
         '''
@@ -1395,7 +1395,8 @@ class Pi0Chain():
                 first_steps = self.true_info['gamma_first_step'][i]
                 points = [vertex, first_steps]
                 graph_data += scatter_points(np.array(points),markersize=4,color='blue')
-                graph_data[-1].name = 'True photon %i: vertex to first step' % i
+                graph_data[-1].name = 'True photon %i vertex to first step (einit: %.2f, edep: %.2f)'\
+                                       %(i,self.true_info['gamma_ekin'][i],self.true_info['gamma_edep'][i])
                 graph_data[-1].mode = 'lines,markers'
         #'''
         

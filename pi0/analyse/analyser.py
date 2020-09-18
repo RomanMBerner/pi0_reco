@@ -142,6 +142,7 @@ class Analyser():
         self.true_info['pi0_track_ids']                  = [] # [-]
         self.true_info['gamma_group_ids']                = [] # [-]
         self.true_info['shower_particle_ids']            = [] # [-]
+        #self.true_info['shower_particle_tids']          = [] # [-]
         #self.true_info['gamma_ids_making_compton_scat'] = [] # [-]      # List of photon ids which make compton scattering
         self.true_info['pi0_ekin']                       = [] # [MeV]
         self.true_info['pi0_mass']                       = [] # [MeV/c2] # Calculated with energy of the gammas and their momenta (invariant mass = sqrt(Etot-ptot))
@@ -250,24 +251,43 @@ class Analyser():
                                 else:
                                     print(' WARNING: |costheta| > 1, cannot append true gamma_angle to the photons!! ')
         
-        # Produce a list of n lists (n = n_gammas) with particle_IDs and group_IDs of each shower
+        # Produce a list of n lists (n = n_gammas) with particle_IDs, particle_track_IDs and group_IDs of each shower
         if self.true_info['n_gammas'] > 0:
-            self.true_info['shower_particle_ids'] = [[] for _ in range(self.true_info['n_gammas'])]
-            self.true_info['shower_group_ids']    = [[] for _ in range(self.true_info['n_gammas'])]
+            self.true_info['shower_particle_ids']  = [[] for _ in range(self.true_info['n_gammas'])]
+            #self.true_info['shower_particle_tids'] = [[] for _ in range(self.true_info['n_gammas'])]
+            self.true_info['shower_group_ids']     = [[] for _ in range(self.true_info['n_gammas'])]
             counter = 0
             for i, p in enumerate(self.event['particles'][0]):
                 if p.parent_pdg_code() == 111 and p.pdg_code() == 22:             # p1 is a true photon
                     self.true_info['shower_particle_ids'][counter].append(p.id())
+                    #self.true_info['shower_particle_tids'][counter].append(p.track_id())
                     counter += 1
             for i, p in enumerate(self.event['particles'][0]):
                 for gamma in range(self.true_info['n_gammas']):
                     if p.parent_id() in self.true_info['shower_particle_ids'][gamma] and p.id() not in self.true_info['shower_particle_ids'][gamma]:
                         self.true_info['shower_particle_ids'][gamma].append(p.id())
+                    #if p.parent_track_id() in self.true_info['shower_particle_tids'][gamma] and p.track_id() not in self.true_info['shower_particle_tids'][gamma]:
+                        #self.true_info['shower_particle_tids'][gamma].append(p.track_id())
             counter = 0
             for i, p in enumerate(self.event['particles'][0]):
                 if p.track_id() in tids_of_true_photons: # and p.pdg_code() == 22:
                     self.true_info['shower_group_ids'][counter].append(p.group_id())
                     counter += 1
+        
+        '''
+        # Test if photons of true showers leave the detector -> missing energy
+        for sh_index, particle_ids in enumerate(self.true_info['shower_particle_ids']):
+            for index, p_ID in enumerate(particle_ids):
+                for i, p in enumerate(self.event['particles'][0]):
+                    if p_ID == p.id() and p.pdg_code()==22:
+                        if p.first_step().x()<0 or p.first_step().x()>767 or\
+                           p.first_step().y()<0 or p.first_step().y()>767 or\
+                           p.first_step().z()<0 or p.first_step().z()>767:
+                            print(' photons first step outside of LAr volume: ')
+                            print(' first_step: %.2f  %.2f  %.2f \t einit: %.2f \t mom: %.2f  %.2f  %.2f'\
+                                  %(p.first_step().x(), p.first_step().y(), p.first_step().z(), p.energy_init(), p.px(), p.py(), p.pz()))
+                        break
+        '''
         
         # Test if photon makes compton scattering
         for i, p in enumerate(self.event['particles'][0]):
@@ -333,6 +353,8 @@ class Analyser():
         self.reco_info['n_pi0']    = len(self.output['matches'])
         self.reco_info['n_gammas'] = 2.*len(self.output['matches'])
         self.reco_info['OOFV']     = self.output['OOFV']
+        
+        print(' ============ n reco pi0: ', self.reco_info['n_pi0'])
 
         showers = self.output['showers']
         
