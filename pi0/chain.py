@@ -1427,6 +1427,34 @@ class Pi0Chain():
                 graph_data[-1].mode = 'lines,markers'
         #'''
 
+        # Add outer module dimensions (TODO: Check dimensions!)
+        # ------------------------------------
+        #'''
+        low_corners  = [[  0,   0,   0], [378,   0,   0], [  0, 378,   0], [378, 378,   0]]
+        high_corners = [[378, 378, 756], [756, 378, 756], [378, 756, 756], [756, 756, 756]]
+        for module_nr in range(len(low_corners)):
+            points = []
+            points.append([low_corners[module_nr][0],low_corners[module_nr][1],low_corners[module_nr][2]])
+            points.append([low_corners[module_nr][0],low_corners[module_nr][1],high_corners[module_nr][2]])
+            points.append([low_corners[module_nr][0],high_corners[module_nr][1],high_corners[module_nr][2]])
+            points.append([low_corners[module_nr][0],high_corners[module_nr][1],low_corners[module_nr][2]])
+            points.append([low_corners[module_nr][0],low_corners[module_nr][1],low_corners[module_nr][2]])
+            points.append([high_corners[module_nr][0],low_corners[module_nr][1],low_corners[module_nr][2]])
+            points.append([high_corners[module_nr][0],low_corners[module_nr][1],high_corners[module_nr][2]])
+            points.append([high_corners[module_nr][0],high_corners[module_nr][1],high_corners[module_nr][2]])
+            points.append([high_corners[module_nr][0],high_corners[module_nr][1],low_corners[module_nr][2]])
+            points.append([high_corners[module_nr][0],low_corners[module_nr][1],low_corners[module_nr][2]])
+            points.append([high_corners[module_nr][0],low_corners[module_nr][1],high_corners[module_nr][2]])
+            points.append([low_corners[module_nr][0],low_corners[module_nr][1],high_corners[module_nr][2]])
+            points.append([low_corners[module_nr][0],high_corners[module_nr][1],high_corners[module_nr][2]])
+            points.append([high_corners[module_nr][0],high_corners[module_nr][1],high_corners[module_nr][2]])
+            points.append([high_corners[module_nr][0],high_corners[module_nr][1],low_corners[module_nr][2]])
+            points.append([low_corners[module_nr][0],high_corners[module_nr][1],low_corners[module_nr][2]])
+            graph_data += scatter_points(np.array(points),color='#53EB83')
+            graph_data[-1].mode = 'lines'
+            graph_data[-1].name = 'Module %i' %module_nr
+        #'''
+
         # Draw
         iplot(go.Figure(data=graph_data,layout=self.layout(**kargs)))
 
