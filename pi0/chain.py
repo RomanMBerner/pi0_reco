@@ -1430,8 +1430,16 @@ class Pi0Chain():
         # Add outer module dimensions (TODO: Check dimensions!)
         # ------------------------------------
         #'''
-        low_corners  = [[  0,   0,   0], [378,   0,   0], [  0, 378,   0], [378, 378,   0]]
-        high_corners = [[378, 378, 756], [756, 378, 756], [378, 756, 756], [756, 756, 756]]
+        module_array = [2,2] # number of modules in x and y direction
+        module_dimensions = [378, 378, 756] # x, y, z (in units of pixels)
+        low_corners = []
+        high_corners = []
+        # Loop over all modules to obtain low and high corners
+        for x_axis in range(module_array[0]):
+            for y_axis in range(module_array[1]):
+                low_corners.append([x_axis*module_dimensions[0], y_axis*module_dimensions[1], 0])
+                high_corners.append([(x_axis+1)*module_dimensions[0], (y_axis+1)*module_dimensions[1], module_dimensions[2]])
+        # Add module edges to graph_data
         for module_nr in range(len(low_corners)):
             points = []
             points.append([low_corners[module_nr][0],low_corners[module_nr][1],low_corners[module_nr][2]])
