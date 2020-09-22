@@ -54,7 +54,7 @@ class Pi0Matcher():
             
             # For all showers: Find pair-wise POCAs and closest distance of a shower's direction to the POCAs
             energy_threshold = 15. # minimum energy [MeV] needed for showers to be taken into account in the search for pair-wise POCAs
-            tolerance_POCA_to_shower = 10. # defines the max. dist. allowed of a POCA to the closest point on the shower's direction axis
+            tolerance_POCA_to_shower = 20. # defines the max. dist. allowed of a POCA to the closest point on the shower's direction axis
             POCAs = self.find_pair_wise_POCAs(np.array(sh_energies), np.array(sh_starts), np.array(sh_directions), tolerance_POCA_to_shower, energy_threshold)
             
             # For all POCAs: Find track-labeled PPN points close to a POCA
