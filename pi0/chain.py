@@ -114,7 +114,7 @@ class Pi0Chain():
 
         # Initialize log
         # TODO: Check if this is needed any longer # rberner
-        #log_path = chain_cfg['name']+'_log.csv'
+        log_path = chain_cfg['name']+'_log.csv'
         log_path = 'masses_fiducialized_' + str(chain_cfg['fiducialize']) + 'px.csv'
         print('Initialized Pi0 mass chain, log path:', log_path)
         self._log = CSVData(log_path)
@@ -233,26 +233,6 @@ class Pi0Chain():
             event_id = event['index']
 
         self.event = event
-        
-        '''
-        # Initialize some objects for reco_info
-        # TODO: Check where it would it fit best
-        self.reco_info['n_pi0']                  = 0    # [-]
-        self.reco_info['n_gammas']               = 0    # [-]
-        self.reco_info['matches']                = []   # [-]
-        self.reco_info['gamma_mom']              = []   # [MeV/c]
-        self.reco_info['gamma_dir']              = []   # [x,y,z]
-        self.reco_info['gamma_start']            = []   # [x,y,z] # pi0->2gamma vertex
-        self.reco_info['gamma_edep']             = []   # [MeV]
-        self.reco_info['gamma_pid']              = []   # [-]
-        self.reco_info['gamma_voxels_mask']      = []   # [-]
-        self.reco_info['gamma_n_voxels_mask']    = []   # [-]
-        self.reco_info['gamma_voxels']           = []   # [-]
-        self.reco_info['gamma_n_voxels']         = []   # [-]
-        self.reco_info['gamma_angle']            = []   # [rad]
-        self.reco_info['pi0_mass']               = []   # [MeV/c2]
-        self.reco_info['OOFV']                   = []   # [-]
-        '''
         
         # Check input
         self.infer_inputs(event)
@@ -1052,16 +1032,12 @@ class Pi0Chain():
             return self.output['matches']
 
         elif self.cfg['shower_match'] == 'proximity':
-            tolerance = 10. # Defines the maximum distance between a track-labeled edep and the reconstructed vertex
-                            # TODO: Read this form chain.config?
-                            # TODO: Optimise this parameter
-            
             # Pair closest shower vectors
             sh_starts   = np.array([s.start for s in self.output['showers']])
             sh_dirs     = np.array([s.direction for s in self.output['showers']])
             sh_energies = np.array([s.energy for s in self.output['showers']])
             try:
-                self.output['matches'], self.output['vertices'], dists = self.matcher.find_matches(self.output['showers'], self.output['segment'], self.cfg['shower_match'], tolerance)
+                self.output['matches'], self.output['vertices'], dists = self.matcher.find_matches(self.output['showers'], self.output['segment'], self.cfg['shower_match'])
             except ValueError as err:
                 if self.verbose:
                     print('Error in PID:', err)
@@ -1076,7 +1052,7 @@ class Pi0Chain():
             sh_dirs = np.array([s.direction for s in self.output['showers']])
             sh_energies = np.array([s.energy for s in self.output['showers']])
             try:
-                self.output['matches'], self.output['vertices'] = self.matcher.find_matches(self.output['showers'], self.output['segment'], self.cfg['shower_match'], tolerance, self.output['PPN_track_points'])
+                self.output['matches'], self.output['vertices'] = self.matcher.find_matches(self.output['showers'], self.output['segment'], self.cfg['shower_match'], self.output['PPN_track_points'])
             except ValueError as err:
                 if self.verbose:
                     print('Error in PID:', err)
@@ -1297,7 +1273,7 @@ class Pi0Chain():
                              u=-dirs[:,0], v=-dirs[:,1], w=-dirs[:,2],
                              sizemode='absolute', sizeref=1.0, anchor='tip',
                              showscale=False, opacity=0.4)
-            graph_data.append(arrows)
+            #graph_data.append(arrows)
         #'''
         
         
@@ -1315,7 +1291,7 @@ class Pi0Chain():
         #'''
         try:
             reco_pi0_decays = self.output['vertices']
-            graph_data += scatter_points(numpy.asarray(reco_pi0_decays),markersize=7, color='lightgreen')
+            graph_data += scatter_points(numpy.asarray(reco_pi0_decays),markersize=4, color='lightgreen')
             graph_data[-1].name = 'Reconstructed pi0 decay vertices'
         except:
             pass
