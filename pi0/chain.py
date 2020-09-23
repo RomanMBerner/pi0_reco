@@ -1329,11 +1329,16 @@ class Pi0Chain():
         # Add manually defined 3D points
         # ------------------------------------
         '''
-        point_01 = np.array([339.56979096, 635.02087863, 211.32317078])
-        point_02 = np.array([10.15830346, 210.4719536, 230.86729454])       
-        points = [np.asarray(point_01), np.asarray(point_02)] #,[325.2, 584.6, 312.3]]
-        graph_data += scatter_points(numpy.asarray(points),markersize=4, color='green')
-        graph_data[-1].name = 'Manually defined points'
+        point_01 = np.array([469.86045002, 231.30654507, 514.07204156])
+        #point_02 = np.array([406.88129432, 233.21140603, 107.01647391])
+        #points = [np.asarray(point_01), np.asarray(point_02)] #,[325.2, 584.6, 312.3]]
+        points = [np.asarray(point_01)]
+        graph_data += scatter_points(numpy.asarray(points),markersize=4, color='orange')
+        graph_data[-1].name = 'CPA'
+        point_02 = np.array([471.35858971, 244.42353517, 516.28956703])
+        points = [np.asarray(point_02)]
+        graph_data += scatter_points(numpy.asarray(points),markersize=4, color='lightgreen')
+        graph_data[-1].name = 'Vtx candidate'
         '''
 
         # Add points predicted by PPN

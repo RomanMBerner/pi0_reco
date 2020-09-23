@@ -38,7 +38,7 @@ class Pi0Matcher():
             track_data = segment[track_mask]
 
             # Get the best valid pairs (closest and compatible)
-            tolerance = 10. # defines the max. allowed dist [px] between two lines of the shower dir. at their point of closest approach.
+            tolerance = 10. # defines the max. allowed dist [px] between two lines of the shower dir. at their closest point of approach.
             matches, vertices, dists = self.find_best_pairs(np.array(sh_starts), np.array(sh_directions), tolerance)
 
             # Find the closest track-like point for each pair, adjust vertex position
@@ -52,21 +52,23 @@ class Pi0Matcher():
             if len(ppn_track_points[0])==0 or len(sh_starts)==0:
                 return matches, vertices
             
-            # For all showers: Find pair-wise POCAs and closest distance of a shower's direction to the POCAs
-            energy_threshold = 15. # minimum energy [MeV] needed for showers to be taken into account in the search for pair-wise POCAs
-            tolerance_POCA_to_shower = 20. # defines the max. dist. allowed of a POCA to the closest point on the shower's direction axis
-            POCAs = self.find_pair_wise_POCAs(np.array(sh_energies), np.array(sh_starts), np.array(sh_directions), tolerance_POCA_to_shower, energy_threshold)
+            # For all showers: Find pair-wise CPAs and closest distance of a shower's direction to the CPAs
+            energy_threshold = 15. # minimum energy [MeV] needed for showers to be taken into account in the search for pair-wise CPAs
+            tolerance_CPA_to_shower = 20. # defines the max. dist. allowed of a CPA to the closest point on the shower's direction axis
+            CPAs = self.find_pair_wise_CPAs(np.array(sh_energies), np.array(sh_starts), np.array(sh_directions), tolerance_CPA_to_shower, energy_threshold)
+            print(' CPAs: ', CPAs)
             
-            # For all POCAs: Find track-labeled PPN points close to a POCA
+            # For all CPAs: Find track-labeled PPN points close to a CPA
             ppns = []
             for point in ppn_track_points[0]:
                 ppns.append([point.ppns[0], point.ppns[1], point.ppns[2]])
             
-            tolerance_POCA_to_PPN = 40. # defines the max. allowed distance of a POCA to the closest track-labeled PPN point
+            tolerance_CPA_to_PPN = 40. # defines the max. allowed distance of a CPA to the closest track-labeled PPN point
             # TODO: READ FROM CONFIG FILE OR FEED IN find_matches_function // TODO: Better organize all tolerance parameters
-            vertex_candidates = self.select_POCAs_close_to_PPNs(POCAs, ppns, tolerance_POCA_to_PPN)
+            vertex_candidates = self.select_CPAs_close_to_PPNs(CPAs, ppns, tolerance_CPA_to_PPN)
             if len(vertex_candidates)==0:
                 return matches, vertices
+            print(' vertex_candidates: ', vertex_candidates)
 
             # Find showers with a direction approximatively (shower_start - vertex_candidate), 
             # reject showers starting too close (< min_distance) to a vertex candidate (e.g. from electrons)
@@ -101,13 +103,13 @@ class Pi0Matcher():
         Inputs:
             - sh_starts (M x 3): array of shower start points
             - sh_directions (M x 3): array of shower directions
-            - tolerance: defines the max. allowed dist [px] between two lines of the shower dir. at their point of closest approach
+            - tolerance: defines the max. allowed dist [px] between two lines of the shower dir. at their closest point of approach
         Returns:
             - Array of id pairs (one per pair of matched showers)
             - Array of production vertices
         '''
         
-        # Get vertex (mean of POCAs) and the distance for each pair of showers, build a separation matrix
+        # Get vertex (mean of CPAs) and the distance for each pair of showers, build a separation matrix
         npoints = len(sh_starts)
         sep_mat = np.full((npoints, npoints), float('inf'))
         ver_mat = [[0., 0., 0.] for _ in range(npoints*npoints)]
@@ -142,7 +144,7 @@ class Pi0Matcher():
 
     def find_vertex(self, sh_starts, sh_directions):
         """
-        Calculates the interaction vertex as the mean of the two POCAs
+        Calculates the interaction vertex as the mean of the two CPAs
         and the minimum distance as the seperation between them.
         
         Inputs:
@@ -152,33 +154,33 @@ class Pi0Matcher():
             - Interaction point
             - Shortest distance between the two lines
         """
-        pocas = self.find_pocas(sh_starts, sh_directions)
-        return np.mean(pocas,axis=0), np.linalg.norm(pocas[1]-pocas[0])
+        CPAs = self.find_CPAs(sh_starts, sh_directions)
+        return np.mean(CPAs,axis=0), np.linalg.norm(CPAs[1]-CPAs[0])
 
 
     @staticmethod
-    def find_pocas(sh_starts, sh_directions):
+    def find_CPAs(sh_starts, sh_directions):
         '''
-        Calculates point of closest approach (POCA) between two vectors
-        *in the backward direction*. If lines are parallel or point of 
-        closest approach is in the "forward" direction returns the 
-        separation between the two sh_starts.
+        Calculates closest point of approach (CPA) between two vectors
+        *in the backward direction*.
+        If lines are parallel or closest point of approach is in the "forward" direction.
+        Returns the separation between the two sh_starts.
         
         Inputs:
             - sh_starts (2 x 3): array of shower start points
             - sh_directions (2 x 3): array of shower directions (*normalized*)
         Returns:
-            - Array of scalars for projection along each vector to reach POCA
-            - Separation at point of closes approach (in backwards direction)
+            - Array of scalars for projection along each vector to reach CPA
+            - Separation at closest point of approach (in backwards direction)
         '''
         # Get the angle between vectors
         d = sh_starts[0]-sh_starts[1]
         v0, v1 = sh_directions[0], sh_directions[1]
         v_dp = np.dot(v0, v1)
 
-        # Check for parallel lines, POCA undefined if parrallel
+        # Check for parallel lines, CPA undefined if parrallel
         if abs(v_dp) == 1:
-            raise ValueError('The two shower axes are parallel, cannot find POCA')
+            raise ValueError('The two shower axes are parallel, cannot find CPA')
 
         # Minimize the distance
         s0 = (-np.dot(d,v0) + np.dot(d,v1)*v_dp)/(1-v_dp**2)
@@ -189,9 +191,9 @@ class Pi0Matcher():
             return [sh_starts[0], sh_starts[1]]
 
         # Minimum separation
-        poca0 = sh_starts[0] + s0 * sh_directions[0]
-        poca1 = sh_starts[1] + s1 * sh_directions[1]
-        return [poca0, poca1]
+        CPA0 = sh_starts[0] + s0 * sh_directions[0]
+        CPA1 = sh_starts[1] + s1 * sh_directions[1]
+        return [CPA0, CPA1]
 
 
     def find_closest_points(self, vertices, track_data):
@@ -207,25 +209,25 @@ class Pi0Matcher():
         return track_data[idxs]
 
 
-    def find_pair_wise_POCAs(self, sh_energies, sh_starts, sh_directions, tolerance_POCA_to_shower, energy_threshold):
+    def find_pair_wise_CPAs(self, sh_energies, sh_starts, sh_directions, tolerance_CPA_to_shower, energy_threshold):
         '''
         Finds the indices of the best pairs, compute the interaction vertex for each pair
         Inputs:
             - sh_energies (M x 3): array of shower energies
             - sh_starts (M x 3): array of shower start points
             - sh_directions (M x 3): array of shower directions
-            - tolerance_POCA_to_shower: defines the max. dist. allowed of a POCA to the closest point on the shower's direction axis
-            - energy_threshold: min. energy deposit of a shower needed to look for POCAs with other showers
+            - tolerance_CPA_to_shower: defines the max. dist. allowed of a CPA to the closest point on the shower's direction axis
+            - energy_threshold: min. energy deposit of a shower needed to look for CPAs with other showers
         Returns:
-            - Array of POCAs (possible pi0 vertices)
+            - Array of CPAs (possible pi0 vertices)
         '''
-        #print(' ------- in function find_pair_wise_POCAs -------')
+        #print(' ------- in function find_pair_wise_CPAs -------')
         #print(' sh_starts:                ', sh_starts)
         #print(' sh_directions:            ', sh_directions)
-        #print(' tolerance_POCA_to_shower: ', tolerance_POCA_to_shower)
+        #print(' tolerance_CPA_to_shower: ', tolerance_CPA_to_shower)
         
-        # Get POCAs between all shower pairs (and the distance between the two lines of the shower directions)
-        POCAs = []
+        # Get CPAs between all shower pairs (and the distance between the two lines of the shower directions)
+        CPAs = []
         npoints = len(sh_starts)
         for i in range(npoints):
 
@@ -241,7 +243,7 @@ class Pi0Matcher():
 
                 #print(' i: ', i, ' \t j: ', j)
 
-                # Get POCAs between all shower pairs (and the distance between the two lines of the shower directions)
+                # Get CPAs between all shower pairs (and the distance between the two lines of the shower directions)
                 P1 = sh_starts[i]
                 P2 = sh_starts[j]
                 dir_P1 = sh_directions[i]
@@ -250,9 +252,9 @@ class Pi0Matcher():
                 # Get the (cos of the) angle between the direction vectors
                 angle = np.dot(dir_P1,dir_P2) / np.linalg.norm(dir_P1)/np.linalg.norm(dir_P2)
                 #print(' angle [deg]:          ', np.arccos(angle)*180/np.pi)
-                # Check for parallel lines or angles which do not make sense (POCA would be undefined)
+                # Check for parallel lines or angles which do not make sense (CPA would be undefined)
                 if abs(angle) == 1 or abs(angle) > 1.:
-                    raise ValueError('The two shower axes are parallel or the angle does not make sense, cannot find POCA')
+                    raise ValueError('The two shower axes are parallel or the angle does not make sense, cannot find CPA')
 
                 vec_P2_P1 = np.array(sh_starts[j])-np.array(sh_starts[i])
                 #print(' vec_P2_P1: ', vec_P2_P1)
@@ -271,75 +273,75 @@ class Pi0Matcher():
                 #print(' tP1: ', tP1)
                 #print(' tP2: ', tP2)
 
-                # Points on direction lines closest to the POCA
+                # Points on direction lines closest to the CPA
                 p1 = np.array(P1) + np.array(tP1) * np.array(dir_P1)
                 p2 = np.array(sh_starts[j]) + np.array(tP2) * np.array(sh_directions[j])
                 #print(' p1: ', p1)
                 #print(' p2: ', p2)
 
-                POCA = (np.array(p2) + np.array(p1)) / 2.
-                #print(' POCA: ', POCA)
+                CPA = (np.array(p2) + np.array(p1)) / 2.
+                #print(' CPA: ', CPA)
 
                 # Shortest distance between the two shower's direction lines
                 dist_between_lines = np.linalg.norm( np.dot(vec_P2_P1,M)) / (np.sqrt(m2))
                 #print(' dist_between_lines: ', dist_between_lines)
 
-                # Distance from closest point on line to POCA
-                dist_to_POCA = np.linalg.norm( np.dot(vec_P2_P1,M)) / (np.sqrt(m2)) / 2.
-                #print(' dist_to_POCA: ', dist_to_POCA)
+                # Distance from closest point on line to CPA
+                dist_to_CPA = np.linalg.norm( np.dot(vec_P2_P1,M)) / (np.sqrt(m2)) / 2.
+                #print(' dist_to_CPA: ', dist_to_CPA)
 
-                if dist_between_lines < tolerance_POCA_to_shower:
-                    POCAs.append(POCA)
+                if dist_between_lines < tolerance_CPA_to_shower:
+                    CPAs.append(CPA)
 
                 '''
                 # Get the (cos of the) angle between the direction vectors
                 angle = np.dot(sh_directions[i], sh_directions[j])
                 print(' angle:          ', angle)
-                # Check for parallel lines or angles which do not make sense (POCA would be undefined)
+                # Check for parallel lines or angles which do not make sense (CPA would be undefined)
                 if abs(angle) == 1 or abs(angle) > 1.:
-                    raise ValueError('The two shower axes are parallel or the angle does not make sense, cannot find POCA')
+                    raise ValueError('The two shower axes are parallel or the angle does not make sense, cannot find CPA')
 
                 dist = abs((sh_starts[j]-sh_starts[i])*angle)/angle
                 print(' dist:           ', dist)
 
-                POCA, dist = [1.,1.,1.], 1.
-                #POCA, dist = self.find_vertex([sh_starts[i], sh_starts[j]], [sh_directions[i], sh_directions[j]])
-                print(' POCA:           ', POCA)
+                CPA, dist = [1.,1.,1.], 1.
+                #CPA, dist = self.find_vertex([sh_starts[i], sh_starts[j]], [sh_directions[i], sh_directions[j]])
+                print(' CPA:            ', CPAs)
                 print(' dist:           ', dist)
-                if dist < tolerance_POCA_to_shower:
-                    POCAs.append(POCA)
+                if dist < tolerance_CPA_to_shower:
+                    CPAs.append(CPA)
                 '''
-        #print(' POCAs:         ', POCAs)
+        #print(' CPAs:          ', CPAs)
 
-        return np.array(POCAs)
+        return np.array(CPAs)
 
-    def select_POCAs_close_to_PPNs(self, POCAs, ppns, tolerance_POCA_to_PPN):
+    def select_CPAs_close_to_PPNs(self, CPAs, ppns, tolerance_CPA_to_PPN):
         '''
-        Finds vertex_candidates = track-labeled PPN points which are close (distance < tolerance) to any POCA
+        Finds vertex_candidates = track-labeled PPN points which are close (distance < tolerance) to any CPA
         Inputs:
-            - POCAs (N x 3): array of POCA points (3D coordinates)
+            - CPAs (N x 3): array of CPA points (3D coordinates)
             - ppns (M x 3): array of track-labeled points from PPN (3D coordinates)
-            - tolerance_POCA_to_PPN: defines the max. allowed distance of a POCA to the closest track-labeled PPN point
+            - tolerance_CPA_to_PPN: defines the max. allowed distance of a CPA to the closest track-labeled PPN point
         Returns:
             - Array of vertex_candidates (possible pi0 vertices)
         '''
-        #print(' ------- in function select_POCAs_close_to_PPNs -------')
-        #print(' POCAs:                 ', POCAs)
+        #print(' ------- in function select_CPAs_close_to_PPNs -------')
+        #print(' CPAs:                 ', CPAs)
         #print(' ppns:                  ', ppns)
-        #print(' tolerance_POCA_to_PPN: ', tolerance_POCA_to_PPN)
+        #print(' tolerance_CPA_to_PPN: ', tolerance_CPA_to_PPN)
         
-        distances = distance.cdist(POCAs,ppns)
+        distances = distance.cdist(CPAs,ppns)
         #print(' distances:         ', distances)
 
-        # Get the closest track_labeled PPN point for each POCA.
-        # If the distance between this point and the POCA is < tolerance_POCA_to_PPN, return it as vertex_candidate
-        idxs = np.argmin(distance.cdist(POCAs,ppns),axis=1)
+        # Get the closest track_labeled PPN point for each CPA.
+        # If the distance between this point and the CPA is < tolerance_CPA_to_PPN, return it as vertex_candidate
+        idxs = np.argmin(distance.cdist(CPAs,ppns),axis=1)
         #print(' idxs: ', idxs)
 
         used_indices = []
         vertex_candidates = []
         for i, idx in enumerate(idxs):
-            if (distances[i][idx]<tolerance_POCA_to_PPN and idx not in used_indices):
+            if (distances[i][idx]<tolerance_CPA_to_PPN and idx not in used_indices):
                 used_indices.append(idx)
                 vertex_candidates.append(ppns[idx])
         #print(' vertex_candidates: ', vertex_candidates)
@@ -349,7 +351,7 @@ class Pi0Matcher():
 
     def find_shower_vertices(self, sh_starts, sh_directions, sh_energies, vertex_candidates, spatial_tolerance, min_distance, angular_tolerance):
         '''
-        Finds vertex_candidates = track-labeled PPN points which are close (distance < tolerance) to any POCA
+        Finds vertex_candidates = track-labeled PPN points which are close (distance < tolerance) to any CPA
         Inputs:
             - sh_starts (N x 3): array of shower start points
             - sh_directions (N x 3): array of shower directions
