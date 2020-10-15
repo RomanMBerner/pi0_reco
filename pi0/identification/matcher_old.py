@@ -65,10 +65,10 @@ class Pi0Matcher():
             
             tolerance_CPA_to_PPN = 40. # defines the max. allowed distance of a CPA to the closest track-labeled PPN point
             # TODO: READ FROM CONFIG FILE OR FEED IN find_matches_function // TODO: Better organize all tolerance parameters
-            vertex_candidates = self.select_CPAs_close_to_PPNs(CPAs, ppns, tolerance_CPA_to_PPN)
-            if len(vertex_candidates)==0:
+            ppn_candidates = self.find_PPNs_close_to_CPAs(CPAs, ppns, tolerance_CPA_to_PPN)
+            if len(ppn_candidates)==0:
                 return matches, vertices
-            print(' vertex_candidates: ', vertex_candidates)
+            print(' ppn_candidates: ', ppn_candidates)
 
             # Find showers with a direction approximatively (shower_start - vertex_candidate), 
             # reject showers starting too close (< min_distance) to a vertex candidate (e.g. from electrons)
@@ -81,15 +81,15 @@ class Pi0Matcher():
                                     # TODO: Optimise this value (it's probably too small)
         
             # Find vertex candidates
-            vertices, reject_ind = self.find_shower_vertices(np.array(sh_starts), np.array(sh_directions), np.array(sh_energies), vertex_candidates, spatial_tolerance, min_distance, angular_tolerance)
-            if len(vertices)==0:
-                return matches, vertices
+            vertex_candidates, reject_ind = self.find_vertex_candidates(np.array(sh_starts), np.array(sh_directions), np.array(sh_energies), ppn_candidates, spatial_tolerance, min_distance, angular_tolerance)
+            if len(vertex_candidates)==0:
+                return matches, vertex_candidates
 
             # Reject showers which have only very little deposited energy
             reject_ind = self.reject_low_energy_showers(np.array(sh_energies), energy_threshold, reject_ind)
 
             # Match shower pairs to pi0 decays
-            matches, vertices = self.find_photon_pairs(vertices, reject_ind, sh_starts, sh_directions)
+            matches, vertices = self.find_photon_pairs(vertex_candidates, reject_ind, sh_starts, sh_directions)
 
             return matches, vertices
 
@@ -315,68 +315,77 @@ class Pi0Matcher():
 
         return np.array(CPAs)
 
-    def select_CPAs_close_to_PPNs(self, CPAs, ppns, tolerance_CPA_to_PPN):
+    def find_PPNs_close_to_CPAs(self, CPAs, ppns, tolerance_CPA_to_PPN):
         '''
-        Finds vertex_candidates = track-labeled PPN points which are close (distance < tolerance) to any CPA
+        Finds ppn_candidates = track-labeled PPN points which are close (distance < tolerance) to any CPA
         Inputs:
             - CPAs (N x 3): array of CPA points (3D coordinates)
             - ppns (M x 3): array of track-labeled points from PPN (3D coordinates)
             - tolerance_CPA_to_PPN: defines the max. allowed distance of a CPA to the closest track-labeled PPN point
         Returns:
-            - Array of vertex_candidates (possible pi0 vertices)
+            - Array of ppn_candidates (possible pi0 vertices)
         '''
-        #print(' ------- in function select_CPAs_close_to_PPNs -------')
-        #print(' CPAs:                 ', CPAs)
-        #print(' ppns:                  ', ppns)
-        #print(' tolerance_CPA_to_PPN: ', tolerance_CPA_to_PPN)
+        print(' ------- in function find_PPNs_close_to_CPAs -------')
+        print(' CPAs:                 ', CPAs)
+        print(' ppns:                  ', ppns)
+        print(' tolerance_CPA_to_PPN: ', tolerance_CPA_to_PPN)
         
         distances = distance.cdist(CPAs,ppns)
-        #print(' distances:         ', distances)
+        print(' distances:         ', distances)
 
         # Get the closest track_labeled PPN point for each CPA.
         # If the distance between this point and the CPA is < tolerance_CPA_to_PPN, return it as vertex_candidate
-        idxs = np.argmin(distance.cdist(CPAs,ppns),axis=1)
-        #print(' idxs: ', idxs)
+        smallest_idx = np.argmin(distance.cdist(CPAs,ppns),axis=1)
+        print(' smallest_idx: ', smallest_idx)
 
         used_indices = []
-        vertex_candidates = []
+        ppn_candidates = []
+        
+        for i, dist in enumerate(distances[0]):
+            if dist < tolerance_CPA_to_PPN:
+                used_indices.append(i)
+                ppn_candidates.append(ppns[i])
+        '''
         for i, idx in enumerate(idxs):
             if (distances[i][idx]<tolerance_CPA_to_PPN and idx not in used_indices):
                 used_indices.append(idx)
-                vertex_candidates.append(ppns[idx])
-        #print(' vertex_candidates: ', vertex_candidates)
+                ppn_candidates.append(ppns[idx])
+        '''
+                
+                
+        print(' ppn_candidates: ', ppn_candidates)
 
-        return np.array(vertex_candidates)
+        return np.array(ppn_candidates)
 
 
-    def find_shower_vertices(self, sh_starts, sh_directions, sh_energies, vertex_candidates, spatial_tolerance, min_distance, angular_tolerance):
+    def find_vertex_candidates(self, sh_starts, sh_directions, sh_energies, ppn_candidates, spatial_tolerance, min_distance, angular_tolerance):
         '''
         Finds vertex_candidates = track-labeled PPN points which are close (distance < tolerance) to any CPA
         Inputs:
             - sh_starts (N x 3): array of shower start points
             - sh_directions (N x 3): array of shower directions
             - sh_energies (N x 1): array of shower energies
-            - vertex_candidates (M x 3): array of vertex candidates
+            - ppn_candidates (M x 3): array of ppn candidates
             - spatial_tolerance: if a sh_start's distance to a vertex_candidate is < spatial_tolerance : take the candidate as sh_start
             - min_distance: reject showers starting close (< min_distance) to a vertex candidate (liekly to be electron/positron induced showers)
             - angular_tolerance: defines the maximum allowed difference between sh_direction and (sh_start-vertex_candidate) [in degrees]
         Returns:
             - Array of shower_vertices
         '''
-        #print(' ------- in function find_shower_vertices -------')
-        #print(' sh_starts:           ', sh_starts)
-        #print(' sh_directions:       ', sh_directions)
-        #print(' vertex_candidates:   ', vertex_candidates)
-        #print(' spatial_tolerance:   ', spatial_tolerance)
-        #print(' min_distance:        ', min_distance)
-        #print(' angular_tolerance:   ', angular_tolerance)
+        print(' ------- in function find_vertex_candidates -------')
+        print(' sh_starts:           ', sh_starts)
+        print(' sh_directions:       ', sh_directions)
+        print(' ppn_candidates:   ', ppn_candidates)
+        print(' spatial_tolerance:   ', spatial_tolerance)
+        print(' min_distance:        ', min_distance)
+        print(' angular_tolerance:   ', angular_tolerance)
         
-        vertices = [[None, None, None] for _ in range(len(sh_starts))]
+        vertex_candidates = [[None, None, None] for _ in range(len(sh_starts))]
 
         # For all showers which have sh_start close (up to spatial_tolerance) to a vertex_candidate:
         # Take the vertex_candidate as the shower's vertex
-        dist = distance.cdist(sh_starts,vertex_candidates)
-        idxs = np.argmin(distance.cdist(sh_starts,vertex_candidates),axis=1)
+        dist = distance.cdist(sh_starts,ppn_candidates)
+        idxs = np.argmin(distance.cdist(sh_starts,ppn_candidates),axis=1)
 
         used_sh_indices     = []
         used_sh_vertices    = []
@@ -389,26 +398,27 @@ class Pi0Matcher():
             if (dist[i][idx]<spatial_tolerance):
                 if dist[i][idx]>min_distance:
                     used_sh_indices.append(i)
-                    used_sh_vertices.append(vertex_candidates[idx])
-                    #print(' Take vertex ', vertex_candidates[idx], ' since it is close to shower ', i, ' with start point ', sh_starts[i])
+                    used_sh_vertices.append(ppn_candidates[idx])
+                    #print(' Take vertex ', ppn_candidates[idx], ' since it is close to shower ', i, ' with start point ', sh_starts[i])
                 else:
                     rejected_sh_indices.append(i)
                     #print(' rejected sh ', i)
+        print(' rejected_sh_indices: ', rejected_sh_indices)
 
         # For all other showers which do not have a vertex_candidate close enough:
         # Take as vertex vertex_candidate which (in combination with sh_start) is in best angular agreement with the sh_direction
         counter = 0
         for sh_index, sh_start in enumerate(sh_starts):
             if sh_index in used_sh_indices:
-                #vertices.append(used_sh_vertices[counter])
-                vertices[sh_index] = used_sh_vertices[counter]
+                #vertex_candidates.append(used_sh_vertices[counter])
+                vertex_candidates[sh_index] = used_sh_vertices[counter]
                 counter += 1
             else:
                 if sh_index in rejected_sh_indices:
                     continue
                 else:
                     min_angle = float('inf')
-                    for vtx_index, vtx_pos in enumerate(vertex_candidates):
+                    for vtx_index, vtx_pos in enumerate(ppn_candidates):
                         angle = np.arccos(np.dot((sh_start-vtx_pos)/np.linalg.norm(sh_start-vtx_pos),sh_directions[sh_index]))*360./(2.*np.pi)
                         if angle < min_angle:
                             selected_vtx_index = vtx_index
@@ -417,13 +427,11 @@ class Pi0Matcher():
                     if min_angle >= angular_tolerance:
                         selected_vtx_index = None
                         selected_vtx_pos = np.array([None,None,None])
-                    #vertices.append(selected_vtx_pos)
-                    vertices[sh_index] = selected_vtx_pos
+                    #vertex_candidates.append(selected_vtx_pos)
+                    vertex_candidates[sh_index] = selected_vtx_pos
+        print(' vertex_candidates:            ', vertex_candidates)
 
-        #print(' vertices:            ', vertices)
-        #print(' rejected_sh_indices: ', rejected_sh_indices)
-
-        return np.array(vertices), np.array(rejected_sh_indices)
+        return np.array(vertex_candidates), np.array(rejected_sh_indices)
 
 
     def reject_low_energy_showers(self, sh_energies, energy_threshold, reject_ind):
@@ -449,35 +457,58 @@ class Pi0Matcher():
         return np.array(reject_ind)
 
 
-    def find_photon_pairs(self, vertices, reject_ind, sh_starts, sh_directions):
+    def find_photon_pairs(self, vertex_candidates, reject_ind, sh_starts, sh_directions):
         '''
         Finds matches (= pairs of showers originated from the same vertex)
         Inputs:
-            - vertices (N x 3): array of vertex positions, N = number of showers in the event
+            - vertex_candidates (M x 3): array of vertex candidates positions, M = number of vertex candidates, 3 = x,y,z coordinates
             - reject_ind: array of shower indices which should be rejected (since they start too close to a vertex candidate or have too few edeps)
             - sh_starts (N x 3): array of shower start points
             - sh_directions (N x 3): array of shower directions
         Returns:
             - matches: Array of shower_id pairs (one per pair of matched showers)
         '''
-        #print(' ------- in function find_photon_pairs -------')
-        #print(' vertices:      ', vertices)
-        #print(' reject_ind:    ', reject_ind)
-        #print(' sh_starts:     ', sh_starts)
-        #print(' sh_directions: ', sh_directions)
+        print(' ------- in function find_photon_pairs -------')
+        print(' vertex_candidates: ', vertex_candidates)
+        print(' reject_ind:        ', reject_ind)
+        print(' sh_starts:         ', sh_starts)
+        print(' sh_directions:     ', sh_directions)
+        
+        # For every vertex candidate, check which shower indices agree (up to 20 degrees) with it
+        max_angle = 20.
+        
+        sh_indices_list = [[] for _ in range(len(vertex_candidates))]
+        angle_agreement_list = [[] for _ in range(len(vertex_candidates))]
+        
+        for vtx_ind, vtx in enumerate(vertex_candidates):
+            for sh_ind, sh_dir in enumerate(sh_directions):
+                print(' vtx: ', vtx)
+                print(' sh_dir: ', sh_dir)
+                print(' sh_starts: ', sh_starts[sh_ind])
+                print(sh_starts[sh_ind]-vtx)
+                print(np.linalg.norm(sh_starts[sh_ind]-vtx))
+                print(sh_directions[sh_ind])
+                angle = np.arccos(np.dot((sh_starts[sh_ind]-np.asarray(vtx))/np.linalg.norm(sh_starts[sh_ind]-np.asarray(vtx)),sh_directions[sh_ind]))*360./(2.*np.pi)
+                print(' angle: ', angle)
+                if  angle < max_angle:
+                    sh_indices_list[vtx_ind].append(sh_ind)
+                    angle_agreement_list[vtx_ind].append(angle)
+        print(' sh_indices_list: ', sh_indices_list)
+        print(' angle_agreement_list: ', angle_agreement_list)
+                    
 
         # TODO: Could be interesting to close the kinematics for the cases where >2 showers originated from the same vertex.
         matches = []
 
-        # Make set of vertices which occur more than once
-        vtx_set = set(tuple(arr) for arr in vertices if not np.any(arr)==None)
+        # Make set of vertex_candidates which occur more than once
+        vtx_set = set(tuple(arr) for arr in vertex_candidates if not np.any(arr)==None)
         #print(' vtx_set: ', vtx_set)
 
         vtx_indices = [[] for _ in range(len(vtx_set))]
 
         for vtx_ind, vtx in enumerate(vtx_set):
             #print(' vtx: ', vtx)
-            for vertex_ind, vertex in enumerate(vertices):
+            for vertex_ind, vertex in enumerate(vertex_candidates):
                 #print(' vertex_ind: ', vertex_ind)
                 #print(' vertex: ', vertex)
                 if vertex_ind in reject_ind:
@@ -503,7 +534,8 @@ class Pi0Matcher():
                 min_index_1 = -9
                 min_index_2 = -8
                 for counter, sh_ind in enumerate(ind):
-                    angle = np.arccos(np.dot((sh_starts[sh_ind]-vertices[sh_ind])/np.linalg.norm(sh_starts[sh_ind]-vertices[sh_ind]),sh_directions[sh_ind]))*360./(2.*np.pi)
+                    angle = np.arccos(np.dot((sh_starts[sh_ind]-vertex_candidates[sh_ind])/np.linalg.norm(sh_starts[sh_ind]-\
+                            vertex_candidates[sh_ind]),sh_directions[sh_ind]))*360./(2.*np.pi)
                     if angle < min_angle_1:
                         min_angle_2 = min_angle_1
                         min_index_2 = min_index_1
@@ -518,12 +550,12 @@ class Pi0Matcher():
             else:
                 print(' WARNING:', len(ind), 'showers pointing to the same vertex candidate -> Do not match any of the shower pairs to a pi0... ')
 
-        #print(' matches: ', matches)
+        print(' matches:       ', matches)
 
         pi0_vertices = []
         for i, match in enumerate(matches):
-            pi0_vertices.append(vertices[match[0]])
+            pi0_vertices.append(vertex_candidates[match[0]])
 
-        #print(' reconstructed pi0_vertices: ', pi0_vertices)
+        print(' reconstructed pi0_vertices: ', pi0_vertices)
 
         return matches, pi0_vertices

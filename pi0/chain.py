@@ -9,7 +9,8 @@ from .directions.estimator import FragmentEstimator, DirectionEstimator
 from .cluster.start_finder import StartPointFinder
 from .cluster.cone_clusterer import ConeClusterer
 from .cluster.dbscan import DBSCANCluster
-from .identification.matcher import Pi0Matcher
+#from .identification.matcher_old import Pi0Matcher # Pi0 vertex is chosen as the PPN point closest to the CPA of two showers
+from .identification.matcher_new import Pi0Matcher # Pi0 vertex is chosen as the PPN point which is in 'best' angular agreement with a pair of showers
 from .identification.PID import ElectronPhoton_Separation
 from .analyse.analyser import Analyser
 from mlreco.main_funcs import process_config, prepare
@@ -93,8 +94,8 @@ class Pi0Chain():
 
     #Class constants
     IDX_SEMANTIC_ID = -1
-    IDX_GROUP_ID = -2
-    IDX_CLUSTER_ID = -3
+    IDX_GROUP_ID    = -2
+    IDX_CLUSTER_ID  = -3
 
 
     def __init__(self, io_cfg, chain_cfg, verbose=False):
@@ -218,6 +219,7 @@ class Pi0Chain():
         from 3D charge information to Pi0 masses for events that
         contain one or more Pi0 decay.
         '''
+        
         # Reset output
         self.output = {}
 
@@ -301,6 +303,8 @@ class Pi0Chain():
         self.obtain_likelihood(event)
 
         # Identify pi0 decays
+        #print(' ------------------------------ ')
+        #print(' Event ID: ', event_id)
         self.identify_pi0(event)
         if not len(self.output['matches']):
             if self.verbose:
@@ -1044,24 +1048,29 @@ class Pi0Chain():
                 return
 
         elif self.cfg['shower_match'] == 'ppn':
-            tolerance = 40. # Defines the maximum distance between the direction line of showers at the closest point
-                            # TODO: Read this form chain.config?
-                            # TODO: Optimise this parameter
             # Pair closest shower vectors
-            sh_starts = np.array([s.start for s in self.output['showers']])
-            sh_dirs = np.array([s.direction for s in self.output['showers']])
+            sh_starts   = np.array([s.start for s in self.output['showers']])
+            sh_dirs     = np.array([s.direction for s in self.output['showers']])
             sh_energies = np.array([s.energy for s in self.output['showers']])
-            try:
-                self.output['matches'], self.output['vertices'] = self.matcher.find_matches(self.output['showers'], self.output['segment'], self.cfg['shower_match'], self.output['PPN_track_points'])
-            except ValueError as err:
-                if self.verbose:
-                    print('Error in PID:', err)
-                return
+            '''
+            print(' sh_starts: ')
+            for sh_index, start in enumerate(sh_starts):
+                print('     ', start)
+            print(' sh_directions: ')
+            for sh_index, direction in enumerate(sh_dirs):
+                print('     ', direction)
+            print(' sh_energies: ')
+            for sh_index, energy in enumerate(sh_energies):
+                print('     ', energy)
+            '''
+            self.output['matches'], self.output['vertices'] = self.matcher.find_matches(self.output['showers'],\
+                                                                                        self.output['segment'],\
+                                                                                        self.cfg['shower_match'],\
+                                                                                        self.output['PPN_track_points'])
             
         else:
             raise ValueError('Shower matching method not recognized:', self.cfg['shower_match'])
 
-            
         if self.cfg['refit_dir'] and (self.cfg['shower_match'] == 'proximity' or self.cfg['shower_match'] == 'ppn'):
             for i, match in enumerate(self.output['matches']):
                 idx1, idx2 = match
@@ -1075,7 +1084,7 @@ class Pi0Chain():
                             print('INFO : ShowerStart == VertexPos -> Do not refit the direction of the shower ... (event:', self.event['index'], ')')
                         continue
                         
-                    # only take new direction if shower start position is not too close to the vertex (makes it more accurate)
+                    # Only take new direction if shower start position is not too close to the vertex
                     # TODO: Optimise this parameter
                     if np.linalg.norm(new_dir) < 5.:
                         continue
@@ -1334,7 +1343,8 @@ class Pi0Chain():
         #points = [np.asarray(point_01), np.asarray(point_02)] #,[325.2, 584.6, 312.3]]
         points = [np.asarray(point_01)]
         graph_data += scatter_points(numpy.asarray(points),markersize=4, color='orange')
-        graph_data[-1].name = 'CPA'
+        graph_data[-1].name = 'Manually defined point'
+        
         point_02 = np.array([471.35858971, 244.42353517, 516.28956703])
         points = [np.asarray(point_02)]
         graph_data += scatter_points(numpy.asarray(points),markersize=4, color='lightgreen')
@@ -1408,7 +1418,7 @@ class Pi0Chain():
                 graph_data[-1].mode = 'lines,markers'
         #'''
 
-        # Add outer module dimensions (TODO: Check dimensions!)
+        # Add outer module dimensions (TODO: Check dimensions, probably add active volumes instead of outer module edges)
         # ------------------------------------
         #'''
         module_array = [2,2] # number of modules in x and y direction
