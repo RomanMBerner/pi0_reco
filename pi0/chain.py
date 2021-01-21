@@ -7,33 +7,39 @@ from .cluster.start_finder import StartPointFinder
 from .cluster.cone_clusterer import ConeClusterer
 from .cluster.dbscan import DBSCANCluster
 from .identification.matcher import Pi0Matcher
+from .utils.logger import Pi0DataLogger
 from mlreco.main_funcs import process_config, prepare
-from mlreco.utils import CSVData
-from mlreco.utils.ppn import uresnet_ppn_type_point_selector
 
 # Class that contains all the shower information
-class Shower():
-    def __init__(self, start=-np.ones(3), direction=-np.ones(3), voxels=[], energy=-1., pid=-1):
-        self.start = start
-        self.direction = direction
-        self.voxels = voxels
-        self.energy = energy
-        self.pid = int(pid)
+class Shower:
+    def __init__(self, start=-np.ones(3), direction=-np.ones(3), voxels=[], energy=-1., pid=-1, group_pred=-1, L_e=-1., L_p=-1.):
+        self.start      = start
+        self.direction  = direction
+        self.voxels     = voxels
+        self.energy     = energy
+        self.pid        = int(pid)
+        self.group_pred = int(group_pred)
+        self.L_e        = L_e # electron (positron) likelihood fraction
+        self.L_p        = L_p # photon likelihood fraction
 
     def __str__(self):
-        return """ Shower  ID {}
+        return """
+        Shower ID  : {}
         Start point: ({:0.2f},{:0.2f},{:0.2f})
         Direction  : ({:0.2f},{:0.2f},{:0.2f})
         Voxel count: {}
-        Energy     : {}""".format(self.pid, *self.start, *self.direction, len(self.voxels), self.energy)
+        Energy     : {}
+        Group_pred : {}
+        """.format(self.pid, *self.start, *self.direction, len(self.voxels), self.energy, self.group_pred)
+
 
 # Chain object class that loads and stores the chain parameters
-class Pi0Chain():
+class Pi0Chain:
 
-    #Class constants
+    # Class constants
     IDX_SEMANTIC_ID = -1
-    IDX_GROUP_ID = -2
-    IDX_CLUSTER_ID = -3
+    IDX_CLUSTER_ID = 5
+    IDX_GROUP_ID = 6
 
     def __init__(self, io_cfg, chain_cfg, verbose=False):
         '''
@@ -49,10 +55,8 @@ class Pi0Chain():
         self.output = {}
 
         # Initialize log
-        log_path = chain_cfg['name']+'_log.csv'
-        print('Initialized Pi0 mass chain, log path:', log_path)
-        self._log = CSVData(log_path)
-        self._keys = ['event_id', 'pion_id', 'pion_mass']
+        print('Initialized Pi0 reconstruction chain')
+        self._log = Pi0DataLogger(chain_cfg['name'])
 
         # If a network is specified, initialize the network
         self.network = False
@@ -64,7 +68,8 @@ class Pi0Chain():
             io_cfg['trainval'] = net_cfg['trainval']
 
         # Initialize the fragment identifier
-        self.frag_est = DBSCANCluster()
+        if chain_cfg['shower_fragment'] == 'dbscan':
+            self.frag_est = DBSCANCluster()
 
         # If a direction estimator is requested, initialize it
         if chain_cfg['shower_direction'] != 'label':
@@ -91,10 +96,8 @@ class Pi0Chain():
     def data_set(self):
         return self.data_set
 
-    def log(self, eid, pion_id, pion_mass):
-        self._log.record(self._keys, [eid, pion_id, pion_mass])
-        self._log.write()
-        self._log.flush()
+    def log(self, event, output):
+        self._log.log(event, output)
 
     def run(self):
         '''
@@ -176,8 +179,8 @@ class Pi0Chain():
         self.charge_to_energy(event)
 
         # Check data dimensions
-        assert self.output['energy' ].shape == self.output['charge'].shape
-        assert self.output['energy' ].shape == self.output['segment'].shape
+        assert self.output['energy'].shape == self.output['charge'].shape
+        assert self.output['energy'].shape == self.output['segment'].shape
 
         # Identify shower starting points, skip if there is less than 2 (no pi0)
         self.reconstruct_shower_starts(event)
@@ -203,14 +206,15 @@ class Pi0Chain():
         if not len(self.output['matches']):
             if self.verbose:
                 print('No pi0 found in event', event_id)
+            #self.log(self.event, self.output)
             return
 
         # Compute masses
         masses = self.pi0_mass()
 
-        # Log masses
-        for i, m in enumerate(masses):
-            self.log(event_id, i, m)
+        # Log data
+        #self.log(self.event, self.output)
+
 
     def infer_inputs(self,event):
         if self.cfg['deghost'] == "label" or self.cfg['segment'] == 'label':
@@ -369,10 +373,10 @@ class Pi0Chain():
                 self.output['showers'] = showers
 
         elif self.cfg['shower_start'] == 'ppn':
-            from mlreco.utils.ppn import uresnet_ppn_point_selector
+            from mlreco.utils.ppn import uresnet_ppn_type_point_selector
             shower_score_index = -1 * (int(larcv.kShapeUnknown) - int(larcv.kShapeShower))
             point_score_index  = -1 * (int(larcv.kShapeUnknown) + 1)
-            points = uresnet_ppn_type_point_selector(self.output['forward'])
+            points = uresnet_ppn_type_point_selector(self.event['input_data'], self.output['forward'])
             points = points[np.where(points[:,shower_score_index] > self.cfg.get('shower_score_threshold',0.5))]
             total_score = points[:,shower_score_index] * points[:,point_score_index]
             order  = np.argsort(total_score)
@@ -380,17 +384,34 @@ class Pi0Chain():
 
         elif self.cfg['shower_start'] == 'gnn':
             # Use the node predictions to find primary nodes
-            if not 'node_pred' in self.output['forward']: 
+            if not 'shower_node_pred' in self.output['forward']:
                 self.output['showers'] = []
                 return
-            primaries = np.where(np.argmax(self.output['forward']['node_pred'][0], axis=1))[0]
-            if not len(primaries):
-                self.output['showers'] = []
-                return
+            from scipy.special import softmax
+            node_scores = softmax(self.output['forward']['shower_node_pred'][0], axis=1)
+            primary_labels = np.zeros(len(node_scores), dtype=bool)
+            group_ids = self.output['forward']['shower_group_pred'][0]
+            for g in np.unique(group_ids):
+                mask = np.where(group_ids == g)[0]
+                idx  = node_scores[mask][:,1].argmax()
+                primary_labels[mask[idx]] = True
+            primaries = np.where(primary_labels)[0]
             primary_clusts = self.output['forward']['shower_fragments'][0][primaries]
+            all_clusts = np.array([np.array(c) for c in self.output['forward']['shower_fragments'][0]])
+            group_ids = self.output['forward']['shower_group_pred'][0]
+
+            # Obtain group_id predicted by GNN for all primary_clusts
+            primary_clusts_group_pred = []
+            for i, primary_cluster in enumerate(primary_clusts):
+                for j, all_cluster in enumerate(all_clusts):
+                    if all_cluster[0]==primary_cluster[0]:
+                        primary_clusts_group_pred.append(group_ids[j])
+                        break
+
+            # Getting start points from GNN
             start_finder = StartPointFinder()
-            start_points = start_finder.find_start_points(self.output['energy'][:,:3], primary_clusts) 
-            self.output['showers'] = [Shower(start=p,pid=int(i)) for i, p in enumerate(start_points)]
+            start_points = start_finder.find_start_points(self.output['energy'][:,:3], primary_clusts)
+            self.output['showers'] = [Shower(start=p,pid=int(i),group_pred=int(primary_clusts_group_pred[i])) for i, p in enumerate(start_points)]
 
         else:
             raise ValueError('EM shower primary identifiation method not recognized:', self.cfg['shower_start'])
@@ -459,7 +480,15 @@ class Pi0Chain():
         elif self.cfg['shower_fragment'] == 'gnn':
             mapping = {idx:i for (i, idx) in enumerate(self.output['shower_mask'][0])}
             clusts = np.array([np.array([mapping[i] for i in c]) for c in self.output['forward']['shower_fragments'][0]])
-            primaries = np.where(np.argmax(self.output['forward']['node_pred'][0], axis=1))[0]
+            from scipy.special import softmax
+            node_scores = softmax(self.output['forward']['shower_node_pred'][0], axis=1)
+            primary_labels = np.zeros(len(node_scores), dtype=bool)
+            group_ids = self.output['forward']['shower_group_pred'][0]
+            for g in np.unique(group_ids):
+                mask = np.where(group_ids == g)[0]
+                idx  = node_scores[mask][:,1].argmax()
+                primary_labels[mask[idx]] = True
+            primaries = np.where(primary_labels)[0]
             others = [i for i in range(len(clusts)) if i not in primaries]
             labels = -np.ones(len(shower_points))
             for i, c in enumerate(clusts):
@@ -531,25 +560,22 @@ class Pi0Chain():
         elif self.cfg['shower_cluster'] == 'gnn':
             mapping = {idx:i for (i, idx) in enumerate(self.output['shower_mask'][0])}
             clusts = np.array([np.array([mapping[i] for i in c]) for c in self.output['forward']['shower_fragments'][0]])
-            primaries = np.where(np.argmax(self.output['forward']['node_pred'][0], axis=1))[0]
-            edge_index = self.output['forward']['edge_index'][0]
-            edge_pred = self.output['forward']['edge_pred'][0]
-            on_mask = np.where(np.argmax(edge_pred, axis=1))[0]
-            from mlreco.utils.gnn.evaluation import node_assignment_bipartite
-            group_ids = node_assignment_bipartite(edge_index[on_mask], edge_pred[on_mask,1], primaries, len(clusts))
+            group_ids = self.output['forward']['shower_group_pred'][0]
             frags, left_frags = [], []
-            for i in np.unique(group_ids):
-                idxs = np.where(group_ids == i)[0]
-                if i in primaries:
-                    frags.append(np.concatenate([clusts[j] for j in idxs]))
-                else:
-                    assert len(idxs) == 1
-                    left_frags.append(clusts[idxs[0]])
+            indices = []
+            used_group_ids = []
+            for i, sh in enumerate(self.output['showers']):
+                for gr_id in group_ids:
+                    if (gr_id == sh.group_pred) and (gr_id not in used_group_ids):
+                        used_group_ids.append(gr_id)
+                        indices.append(np.where(group_ids == sh.group_pred)[0])
+            for frag, ind in enumerate(indices):
+                frags.append(np.concatenate([clusts[j] for j in ind]))
             for i, s in enumerate(self.output['showers']):
                 s.voxels = frags[i]
+                #s.energy = np.sum(self.output['energy'][self.output['shower_mask']][frags[i]][:,-1])
             self.output['shower_fragments'] = frags
             self.output['leftover_fragments'] = left_frags
-            #self.merge_leftovers(event)
 
         else:
             raise ValueError('Merge shower fragments method not recognized:', self.cfg['shower_cluster'])
@@ -693,7 +719,8 @@ class Pi0Chain():
                     v = np.array(self.output['vertices'][i])
                     for shower_idx in [idx1,idx2]:
                         new_dir = np.array(points[shower_idx]) - v
-                        self.output['showers'][shower_idx].direction = new_dir/np.linalg.norm(new_dir)
+                        if np.linalg.norm(new_dir) > 5:
+                            self.output['showers'][shower_idx].direction = new_dir/np.linalg.norm(new_dir)
 
             # Below commented out as the clustering stage relies on ordering of merging fragments and
             #       grouping of fragments. Simply re-calling that function at this point with an updated
@@ -772,5 +799,13 @@ class Pi0Chain():
                     graph_data[-1].mode = 'lines,markers'
 
         # Draw
-        iplot(go.Figure(data=graph_data,layout=self.layout(**kargs)))
-
+        #go.Figure(data=graph_data,layout=self.layout(**kargs))
+        from mlreco.visualization import plotly_layout3d
+        fig = go.Figure(data=graph_data,layout=plotly_layout3d())
+        camera = dict(
+            up=dict(x=0, y=0, z=0),
+            center=dict(x=0, y=0, z=-0.3),
+            eye=dict(x=0.4, y=0.4, z=0.4)
+        )
+        fig.update_layout(scene_camera=camera, showlegend=False)
+        iplot(fig)
