@@ -372,7 +372,6 @@ def group_fragments(fragments, dist_prep=15, dist_rad=150, veto_dist=10):
     2020.01.13 kvtsang Modified using tree-like structure
                        Returned root of each merged fragments
     """
-
     parents = create_tree(fragments, dist_prep, dist_rad, veto_dist)
     psuedo_trees = trace_tree(parents)
 
