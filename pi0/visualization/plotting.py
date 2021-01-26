@@ -8,20 +8,20 @@ def layout(width=1024, height=768, xrange=(0,768), yrange=(0,768), zrange=(0,768
     import plotly.graph_objs as go
 
     layout = go.Layout(
-        showlegend=True,
-        legend=dict(x=1.01,y=0.95),
-        width=width,
-        height=height,
-        hovermode='closest',
-        margin=dict(l=0,r=0,b=0,t=0),
-        #template='plotly_dark',
+        showlegend = True,
+        legend     = dict(x=1.01,y=0.95),
+        width      = width,
+        height     = height,
+        hovermode  = 'closest',
+        margin     = dict(l=0,r=0,b=0,t=0),
         uirevision = 'same',
-        scene = dict(xaxis = dict(nticks=10, range = xrange, showticklabels=True, title='x'),
-                     yaxis = dict(nticks=10, range = yrange, showticklabels=True, title='y'),
-                     zaxis = dict(nticks=10, range = zrange, showticklabels=True, title='z'),
-                     aspectmode=aspectmode)
+        scene      = dict(xaxis = dict(nticks=10, range = xrange, showticklabels=True, title='x'),
+                          yaxis = dict(nticks=10, range = yrange, showticklabels=True, title='y'),
+                          zaxis = dict(nticks=10, range = zrange, showticklabels=True, title='z'),
+                          aspectmode=aspectmode)
     )
     if dark: layout.template = 'plotly_dark'
+
     return layout
 
 def draw_event(output, truth, **kwargs):

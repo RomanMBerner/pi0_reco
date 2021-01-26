@@ -112,8 +112,7 @@ class Pi0Chain:
             setattr(self, f'_{module}_args', {k:v for k, v in mod_cfg[module].items() if k != 'method'})
             if 'uresnet' or 'ppn' or 'gnn' in method: self._network = True
 
-        # TODO: Enforce logical order of modules
-
+        # TODO: Enforce logical order of modules (is there a smart way to do this?)
 
         # Initialize the mlreco configuration
         assert 'mlreco' in chain_cfg, 'mlreco not specified in chain configuration'
@@ -222,7 +221,7 @@ class Pi0Chain:
             self._print('No shower voxel found in event {}'.format(event['index']))
             return
 
-        # Filter out ghosts
+        # Filter out ghosts, if necessary
         self.filter_ghosts(event)
 
         # Reconstruct energy
@@ -283,13 +282,14 @@ class Pi0Chain:
             assert 'energy_label' in event, 'No energy_label data in the input, needed for true energy'
             assert event['energy_label' ].shape == event['input_data'].shape
             self._output['energy_label'] = copy(event['energy_label'])
-        if self._shower_fragment == 'label' or self._shower_cluster == 'label' or True: # TODO: RESET THIS
+        if 'label' in [self._shower_fragment, self._shower_primary,\
+            self._shower_start, self._shower_direction, self._shower_cluster,\
+            self._shower_energy, self._shower_id, self._shower_match]:
             assert 'cluster_label' in event
             assert event['cluster_label' ].shape[0] == event['input_data'].shape[0]
             self._output['cluster_label'] = copy(event['cluster_label'])
-        if 'label' in [ self._shower_fragment, self._shower_direction, self._shower_cluster, self._shower_energy ]:
-            assert self._shower_start == 'label'
-        if self._shower_start == 'label':
+        if 'label' in [self._shower_primary, self._shower_start, self._shower_direction,\
+                self._shower_energy, self._shower_id, self._shower_match]:
             assert 'particles' in event
 
         self._output['charge'] = copy(event['input_data'])
@@ -308,7 +308,7 @@ class Pi0Chain:
             self._output['segment'] = copy(event['segment_label'])
             self._output['segment'][:,-1] = np.argmax(self._output['forward']['segmentation'], axis=1)
 
-        self._output['shower_mask'] = np.where(self._output['segment'][:,-1] == larcv.kShapeShower)
+        self._output['shower_mask'] = np.where(self._output['segment'][:,-1] == larcv.kShapeShower)[0]
 
 
     def filter_ghosts(self, event):
@@ -333,7 +333,7 @@ class Pi0Chain:
         if 'segment_label' in self._output: self._output['segment_label'] = self._output['segment_label'][mask]
         if 'cluster_label' in self._output: self._output['cluster_label'] = self._output['cluster_label'][mask]
 
-        self._output['shower_mask'] = np.where(self._output['segment'][:,-1] == larcv.kShapeShower)
+        self._output['shower_mask'] = np.where(self._output['segment'][:,-1] == larcv.kShapeShower)[0]
 
 
     def charge_to_energy(self, event):
@@ -364,12 +364,14 @@ class Pi0Chain:
         '''
         if self._shower_fragment == 'label':
             # Loop over true fragments, append one fragment per unique true label
-            self._output['shower_fragments'] = []
+            fragments = []
             shower_label = self._output['cluster_label'][self._output['shower_mask']]
             for pid in np.unique(shower_label[:,self.IDX_CLUSTER_ID]):
                 if pid > -1:
                     mask = np.where(shower_label[:,self.IDX_CLUSTER_ID] == pid)[0]
-                    self._output['shower_fragments'].append(self._output['shower_mask'][mask])
+                    fragments.append(self._output['shower_mask'][mask])
+            same_length = np.all([len(f) == len(fragments[0]) for f in fragments])
+            self._output['shower_fragments'] = np.array(fragments, dtype=object if not same_length else np.int64)
 
         elif self._shower_fragment == 'dbscan':
             # Cluster shower energy depositions using dbscan
@@ -394,11 +396,15 @@ class Pi0Chain:
         primary fragment, associate a unique shower object.
         '''
         if self._shower_primary == 'label':
-            # Simply identify the primary by checking if the particle corresponding to the fragment
-            # is one. Create a shower instance per primary fragment
-            clust_ids    = get_cluster_label(self._output['cluster_label'], self._output['shower_fragments'], self.IDX_CLUSTER_ID)
-            group_ids    = get_cluster_label(self._output['cluster_label'], self._output['shower_fragments'], self.IDX_GROUP_ID)
-            primary_mask = clust_ids == group_ids
+            # Create one primary per shower group. Select the fragment with earliest time as primary
+            clust_ids    = self.get_cluster_label(self._output['cluster_label'], self._output['shower_fragments'], self.IDX_CLUSTER_ID)
+            group_ids    = self.get_cluster_label(self._output['cluster_label'], self._output['shower_fragments'], self.IDX_GROUP_ID)
+            primary_mask = np.zeros(len(group_ids), dtype=bool)
+            for g in np.unique(group_ids):
+                mask = np.where(group_ids == g)[0]
+                times = [event['particles'][i].first_step().t() for i in clust_ids[mask]]
+                idx   = np.argmin(times)
+                primary_mask[mask[idx]] = True
 
         elif self._shower_primary == 'gnn':
             # For each predicted shower group, pick the most likely node as the primary
@@ -427,10 +433,10 @@ class Pi0Chain:
         if self._shower_start == 'label':
             # For each primary fragment, use start point of the corresponding particle
             primary_frags = [s.voxels for s in self._output['showers']]
-            clust_ids = get_cluster_label(self._output['cluster_label'], primary_frags, self.IDX_CLUSTER_ID)
+            clust_ids = self.get_cluster_label(self._output['cluster_label'], primary_frags, self.IDX_CLUSTER_ID)
             for i, s in enumerate(self._output['showers']):
                 first_step = event['particles'][clust_ids[i]].first_step()
-                s.start    = [first_step.x(), first_step.y(), first_step.z()]
+                s.start    = np.array([first_step.x(), first_step.y(), first_step.z()])
 
         elif self._shower_start == 'curv':
             # Use point of max umbrella curvature as starting point
@@ -460,11 +466,12 @@ class Pi0Chain:
         if self._shower_direction == 'label':
             # For each primary fragment, use the starting direction of the corresponding particle
             primary_frags = [s.voxels for s in self._output['showers']]
-            clust_ids     = get_cluster_label(self._output['cluster_label'], primary_frags, self.IDX_CLUSTER_ID)
+            clust_ids     = self.get_cluster_label(self._output['cluster_label'], primary_frags, self.IDX_CLUSTER_ID)
             for i, s in enumerate(self._output['showers']):
-                particle    = event['particles'][clust_ids[i]]
+                group_id    = event['particles'][clust_ids[i]].group_id()
+                particle    = event['particles'][group_id]
                 mom         = [particle.px(), particle.py(), particle.pz()]
-                s.direction = list(np.array(mom)/np.linalg.norm(mom))
+                s.direction = np.array(mom)/np.linalg.norm(mom)
 
         elif self._shower_direction == 'geo':
             # Use a geometric method to estimate the direction of the primary shower fragment (PCA or centroid)
@@ -482,7 +489,7 @@ class Pi0Chain:
         if self._shower_cluster == 'label':
             # Use group labels of shower fragments and leftover voxels to put them together
             primary_group_ids  = [s.pid for s in self._output['showers']]
-            frag_group_ids     = get_cluster_label(self._output['cluster_label'], self._output['shower_fragments'], self.IDX_GROUP_ID)
+            frag_group_ids     = self.get_cluster_label(self._output['cluster_label'], self._output['shower_fragments'], self.IDX_GROUP_ID)
             frag_mask          = np.ones(len(frag_group_ids), dtype=np.bool)
             for i, s in enumerate(self._output['showers']):
                 group_mask = frag_group_ids == primary_group_ids[i]
@@ -490,12 +497,12 @@ class Pi0Chain:
                 frag_mask[group_mask] = False
 
             lo_mask = np.ones(len(self._output['leftover_energy']), dtype=np.bool)
-            for i, s in enumerate(self._output_showers):
+            for i, s in enumerate(self._output['showers']):
                 group_mask = self._output['cluster_label'][self._output['leftover_energy'],self.IDX_GROUP_ID] == primary_group_ids[i]
                 s.voxels = np.concatenate([s.voxels, self._output['leftover_energy'][group_mask]])
                 lo_mask[group_mask] = False
 
-            self._output['leftover_fragments'] = self._output['fragments'][frag_mask]
+            self._output['leftover_fragments'] = self._output['shower_fragments'][frag_mask]
             self._output['leftover_energy'] = self._output['leftover_energy'][lo_mask]
 
         elif self._shower_cluster == 'cone':
@@ -575,8 +582,11 @@ class Pi0Chain:
         '''
         if self._shower_energy == 'label':
             # Get the true total shower energy from the particle tree
-            for s in self._output['showers']:
-                s.energy = event['particles'][s.pid].energy_init()
+            primary_frags = [s.voxels for s in self._output['showers']]
+            clust_ids     = self.get_cluster_label(self._output['cluster_label'], primary_frags, self.IDX_CLUSTER_ID)
+            for i, s in enumerate(self._output['showers']):
+                group_id = event['particles'][clust_ids[i]].group_id()
+                s.energy = event['particles'][group_id].energy_init()
         elif self._shower_energy == 'pixel_sum':
             # Sum the energy of all the voxels in the shower
             for s in self._output['showers']:
