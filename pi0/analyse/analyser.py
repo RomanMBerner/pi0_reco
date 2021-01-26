@@ -27,7 +27,7 @@ class ElectronShower(): # Including positron induced showers
         self.einit      = einit
         self.edeps      = edeps
         self.edep_tot   = edep_tot
-    
+
     def __str__(self):
         return """
         Shower ID  : {}
@@ -70,7 +70,7 @@ class PhotonShower(): # Including photons which make Compton Scattering
         self.einit      = einit
         self.edeps      = edeps
         self.edep_tot   = edep_tot
-    
+
     def __str__(self):
         return """
         Shower ID  : {}
@@ -113,7 +113,7 @@ class ComptonShower(): # Only photon induced showers which make Compton Scatteri
         self.einit      = einit
         self.edeps      = edeps
         self.edep_tot   = edep_tot
-    
+
     def __str__(self):
         return """
         Shower ID  : {}
@@ -132,7 +132,18 @@ class ComptonShower(): # Only photon induced showers which make Compton Scatteri
 
 
 class Analyser():
-    
+
+    def __init__(self):
+        self.initialize_true()
+        self.initialize_reco()
+
+
+    def record(self, event, output, fiducial=0):
+        self.extract_true_information(event, fiducial)
+        self.find_true_electron_showers(event, output)
+        self.find_true_photon_showers(event, output)
+        self.extract_reco_information(event, output)
+
     def initialize_true(self):
         self.true_info = {}
 
@@ -161,11 +172,11 @@ class Analyser():
                                                                          # Note: If photon leaves detector without producing an edep, this is NOT classified as OOFV.
                                                                          # For those events: Consider self.true_info['n_voxels']
         return
-    
-    
+
+
     def initialize_reco(self):
         self.reco_info = {}
-        
+
         self.reco_info['ev_id']                          = -1 # [-]
         self.reco_info['n_pi0']                          = 0  # [-]
         self.reco_info['n_gammas']                       = 0  # [-]
@@ -185,29 +196,29 @@ class Analyser():
                                                                          # Note: If photon leaves detector without producing an edep, this is NOT classified as OOFV.
                                                                          # For those events: Consider self.true_info['n_voxels']
         return
-    
-    
-    def extract_true_information(self, event):
+
+
+    def extract_true_information(self, event, fiducial):
         '''
         Obtain true informations about pi0s and gammas originated from pi0 decays and dump
         it to self.true_info['<variable>']
         '''
-        
+
         #print(' self.true_info[ev_id]: ', self.true_info['ev_id'])
-        self.true_info['ev_id'] = self.event['index']
-        
+        self.true_info['ev_id'] = event['index']
+
         # Define some lists for pi0s, daughter photons and their compton electrons
         ids_of_true_photons           = [] # every photon has its own id
         tids_of_true_photons          = [] # every photon has its own tid
         parent_tids_of_true_photons   = [] # photons from the same pi0 decay have the same parent_track_id
         ids_of_photons_making_compton = [] # True or False for every true photon
         compton_electron_first_step   = [] # [x,y,z] coordinates of compton electrons first step
-        
+
         # Get photons from pi0 decays:
         # Note: Photons from the same pi0 have the same parent_track_id.
         #       Every photon (from pi0 decay) has its own id.
         #       Primary pi0s do not have id and track_id
-        for i, p in enumerate(self.event['particles'][0]):
+        for i, p in enumerate(event['particles']):
             #print(p.dump())
             if p.parent_pdg_code() == 111 and p.pdg_code() == 22:
                 ids_of_true_photons.append(p.id())
@@ -221,17 +232,17 @@ class Analyser():
                 self.true_info['gamma_first_step'].append([p.first_step().x(),p.first_step().y(),p.first_step().z()]) #, p.first_step().t()])
         self.true_info['n_pi0']    = len(np.unique(parent_tids_of_true_photons))
         self.true_info['n_gammas'] = len(ids_of_true_photons)
-        
+
         # Obtain pi0 kinematic variable
         used_tids = []
         if self.true_info['n_pi0'] > 0:
-            for i, p in enumerate(self.event['particles'][0]):
+            for i, p in enumerate(event['particles']):
                 for r, idx1 in enumerate(parent_tids_of_true_photons):
                     for s, idx2 in enumerate(parent_tids_of_true_photons):
                         if not (s > r):
                             continue
                         else:
-                            if idx1 == idx2 and idx1 not in used_tids:                             
+                            if idx1 == idx2 and idx1 not in used_tids:
                                 used_tids.append(idx1)
                                 # Test if invariant mass corresponds to pi0 mass (if not: likely to have matched wrong showers!)
                                 Etot = (self.true_info['gamma_ekin'][r]+self.true_info['gamma_ekin'][s])**2
@@ -250,35 +261,35 @@ class Analyser():
                                     self.true_info['gamma_angle'].append(np.arccos(costheta))
                                 else:
                                     print(' WARNING: |costheta| > 1, cannot append true gamma_angle to the photons!! ')
-        
+
         # Produce a list of n lists (n = n_gammas) with particle_IDs, particle_track_IDs and group_IDs of each shower
         if self.true_info['n_gammas'] > 0:
             self.true_info['shower_particle_ids']  = [[] for _ in range(self.true_info['n_gammas'])]
             #self.true_info['shower_particle_tids'] = [[] for _ in range(self.true_info['n_gammas'])]
             self.true_info['shower_group_ids']     = [[] for _ in range(self.true_info['n_gammas'])]
             counter = 0
-            for i, p in enumerate(self.event['particles'][0]):
+            for i, p in enumerate(event['particles']):
                 if p.parent_pdg_code() == 111 and p.pdg_code() == 22:             # p1 is a true photon
                     self.true_info['shower_particle_ids'][counter].append(p.id())
                     #self.true_info['shower_particle_tids'][counter].append(p.track_id())
                     counter += 1
-            for i, p in enumerate(self.event['particles'][0]):
+            for i, p in enumerate(event['particles']):
                 for gamma in range(self.true_info['n_gammas']):
                     if p.parent_id() in self.true_info['shower_particle_ids'][gamma] and p.id() not in self.true_info['shower_particle_ids'][gamma]:
                         self.true_info['shower_particle_ids'][gamma].append(p.id())
                     #if p.parent_track_id() in self.true_info['shower_particle_tids'][gamma] and p.track_id() not in self.true_info['shower_particle_tids'][gamma]:
                         #self.true_info['shower_particle_tids'][gamma].append(p.track_id())
             counter = 0
-            for i, p in enumerate(self.event['particles'][0]):
+            for i, p in enumerate(event['particles']):
                 if p.track_id() in tids_of_true_photons: # and p.pdg_code() == 22:
                     self.true_info['shower_group_ids'][counter].append(p.group_id())
                     counter += 1
-        
+
         '''
         # Test if photons of true showers leave the detector -> missing energy
         for sh_index, particle_ids in enumerate(self.true_info['shower_particle_ids']):
             for index, p_ID in enumerate(particle_ids):
-                for i, p in enumerate(self.event['particles'][0]):
+                for i, p in enumerate(event['particles']):
                     if p_ID == p.id() and p.pdg_code()==22:
                         if p.first_step().x()<0 or p.first_step().x()>767 or\
                            p.first_step().y()<0 or p.first_step().y()>767 or\
@@ -288,36 +299,36 @@ class Analyser():
                                   %(p.first_step().x(), p.first_step().y(), p.first_step().z(), p.energy_init(), p.px(), p.py(), p.pz()))
                         break
         '''
-        
+
         # Test if photon makes compton scattering
-        for i, p in enumerate(self.event['particles'][0]):
+        for i, p in enumerate(event['particles']):
             if p.parent_pdg_code()==22 and p.parent_id() in ids_of_true_photons:
                 if p.parent_id() not in ids_of_photons_making_compton:
                     ids_of_photons_making_compton.append(p.parent_id())
                     compton_electron_first_step.append([p.first_step().x(),p.first_step().y(),p.first_step().z()]) #, p.first_step().t()])
         self.true_info['gamma_ids_making_compton_scat'] = ids_of_photons_making_compton
         self.true_info['compton_electron_first_step'] = compton_electron_first_step
-        
+
         # Obtain shower's first (in time) energy deposit and define it as true shower's start position
         for j, showers_particle_ids in enumerate(self.true_info['shower_particle_ids']):
             min_time = float('inf')
             first_step = [float('inf'), float('inf'), float('inf')]
-            for i, p in enumerate(self.event['particles'][0]):
+            for i, p in enumerate(event['particles']):
                 if p.id() in showers_particle_ids:
                     if p.first_step().t() > 0. and p.first_step().t() < min_time:
                         min_time = p.first_step().t()
                         first_step = [p.first_step().x(), p.first_step().y(), p.first_step().z()] # , p.first_step().t()
             self.true_info['shower_first_edep'].append(first_step)
-        
+
         # Loop over all clusters and get voxels and total deposited energy for every true gamma shower
         # Note: using parser 'parse_cluster3d_full', one can obtain a cluster via
-        # clusters = self.event['cluster_label'] where the entries are
+        # clusters = event['cluster_label'] where the entries are
         # x,y,z,batch_id,voxel_value,cluster_id,group_id,semantic_type
         if self.true_info['n_gammas'] > 0:
             self.true_info['gamma_voxels'] = [[] for _ in range(self.true_info['n_gammas'])]
             self.true_info['gamma_edep']   = [0. for _ in range(self.true_info['n_gammas'])]
             # gamma_voxels is a list of n lists (n = number of gammas) with voxel coordinates of each shower
-            clusters = self.event['cluster_label']
+            clusters = event['cluster_label']
             for cluster_index, edep in enumerate(clusters):
                 for group_index, group in enumerate(self.true_info['shower_group_ids']):
                     summed_edep = 0.
@@ -330,38 +341,38 @@ class Analyser():
             self.true_info['gamma_voxels'] = []
 
         # Out-Of-Fiducial-Volume (OOFV) information:
-        # If at least one edep is OOFV: Put shower number to list self.output['OOFV']
+        # If at least one edep is OOFV: Put shower number to list output['OOFV']
         # This is relatively strict -> might want to add the shower to OOFV
         # only if a certain fraction of all edeps is OOFV
         # TODO: Also add the shower number to OOFV if true_gamma.first_step is OOFV (otherwise it could happen that a true photon which leaves the LAr volume without edep is not OOFV)
         for shower_index, shower in enumerate(self.true_info['gamma_voxels']):
             for edep in range(len(shower)):
                 coordinate = np.array((shower[edep][0],shower[edep][1],shower[edep][2]))
-                if ( np.any(coordinate<self.cfg['fiducialize']) or np.any(coordinate>(767-self.cfg['fiducialize'])) ):
+                if ( np.any(coordinate<fiducial) or np.any(coordinate>(767-fiducial)) ):
                     self.true_info['OOFV'].append(shower_index)
                     break
         return
-    
-    
-    def extract_reco_information(self, event):
+
+
+    def extract_reco_information(self, event, output):
         '''
         Obtain reconstructed informations about pi0s and gammas originated from pi0 decays and dump
         it to self.reco_info['<variable>']
         '''
-        
-        self.reco_info['ev_id']    = self.event['index']
-        self.reco_info['n_pi0']    = len(self.output['matches'])
-        self.reco_info['n_gammas'] = 2.*len(self.output['matches'])
-        self.reco_info['OOFV']     = self.output['OOFV']
-        
+
+        self.reco_info['ev_id']    = event['index']
+        self.reco_info['n_pi0']    = len(output['matches'])
+        self.reco_info['n_gammas'] = 2.*len(output['matches'])
+        self.reco_info['OOFV']     = output['OOFV']
+
         print(' ============ n reco pi0: ', self.reco_info['n_pi0'])
 
-        showers = self.output['showers']
-        
+        showers = output['showers']
+
         # Note: match = if two showers point to the same point and this point is close to a track
         for match in range(self.reco_info['n_pi0']):
-            match_1 = self.output['matches'][match][0]
-            match_2 = self.output['matches'][match][1]               
+            match_1 = output['matches'][match][0]
+            match_2 = output['matches'][match][1]
             self.reco_info['matches'].append(match_1)
             self.reco_info['matches'].append(match_2)
             self.reco_info['gamma_mom'].append(np.array(showers[match_1].direction*showers[match_1].energy))
@@ -380,20 +391,20 @@ class Analyser():
             self.reco_info['gamma_n_voxels_mask'].append(showers[match_2].voxels.size)
 
             # Obtain the showers edeps (x,y,z,batch_id,energy_deposition)
-            mask = self.output['shower_mask']                           # mask for all edeps classified as shower
-            voxels_1 = self.output['showers'][match_1].voxels           # indices in the mask for the 1st match
-            voxels_2 = self.output['showers'][match_2].voxels           # indices in the mask for the 2nd match
-            edeps_1 = self.output['energy'][mask][voxels_1]             # all edeps for the 1st match
-            edeps_2 = self.output['energy'][mask][voxels_2]             # all edeps for the 2nd match
+            mask = output['shower_mask']                           # mask for all edeps classified as shower
+            voxels_1 = output['showers'][match_1].voxels           # indices in the mask for the 1st match
+            voxels_2 = output['showers'][match_2].voxels           # indices in the mask for the 2nd match
+            edeps_1 = output['energy'][mask][voxels_1]             # all edeps for the 1st match
+            edeps_2 = output['energy'][mask][voxels_2]             # all edeps for the 2nd match
             self.reco_info['gamma_voxels'].append(np.array(edeps_1))
             self.reco_info['gamma_voxels'].append(np.array(edeps_2))
             self.reco_info['gamma_n_voxels'].append(len(edeps_1))
             self.reco_info['gamma_n_voxels'].append(len(edeps_2))
 
         # Reconstructed angle and pi0 mass
-        for match in self.output['matches']:
+        for match in output['matches']:
             idx1, idx2 = match
-            s1, s2 = self.output['showers'][idx1], self.output['showers'][idx2]
+            s1, s2 = output['showers'][idx1], output['showers'][idx2]
             e1, e2 = s1.energy, s2.energy
             t1, t2 = s1.direction, s2.direction
             #if np.any(np.isnan(t1)) or np.any(np.isnan(t2)):
@@ -407,7 +418,7 @@ class Analyser():
                 print(' WARNING: shower direction not assigned: \t dir_1: ', t1, ' \t dir_2: ', t2)
                 print(' \t -> set costheta = 1 and pi0_mass = 0 ')
                 costheta = 1.
-                
+
             if abs(costheta) > 1.:
                 print(' WARNING: costheta = np.dot(sh1.dir, sh2.dir) = ', costheta, ' > 1.')
                 print(' \t -> set costheta = 1 and pi0_mass = 0 ')
@@ -417,20 +428,20 @@ class Analyser():
             self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
             self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
         return
-    
-    
-    def find_true_electron_showers(self, event):
+
+
+    def find_true_electron_showers(self, event, output):
         '''
-        Obtain true information about showers induced by (primary) electrons and dump it to self.output['electronShowers'].
-        '''        
+        Obtain true information about showers induced by (primary) electrons and dump it to output['electronShowers'].
+        '''
         #print(' ---- in function find_true_electron_showers ---- ')
         electron_showers = []
-        
+
         # Get group_id of shower produced by electron
         group_ids = []
         #ids = []
         #tids = []
-        for i, p in enumerate(self.event['particles'][0]):
+        for i, p in enumerate(event['particles']):
             if (p.pdg_code() == 11 or p.pdg_code() == -11) and p.parent_pdg_code() == 0:
                 #print(p.dump())
                 #print(' --- p.track_id: ', p.track_id())
@@ -444,28 +455,28 @@ class Analyser():
         #print(' group_ids: ', group_ids)
         #print(' ids: ', ids)
         #print(' tids: ', tids)
-        
+
         '''
         for list_index, id_list in enumerate(ids):
-            for i, p in enumerate(self.event['particles'][0]):
+            for i, p in enumerate(event['particles']):
                 if p.parent_id() in id_list:
                     id_list.append(p.id())
         print(' ids: ', ids)
-        
+
         for list_index, tid_list in enumerate(tids):
-            for i, p in enumerate(self.event['particles'][0]):
+            for i, p in enumerate(event['particles']):
                 if p.parent_track_id() in tid_list:
                     tid_list.append(p.track_id())
         print(' tids: ', tids)
         '''
-        
+
         # Find earliest (in time) edep
         earliest_edep_pos = []
         for index, group_id in enumerate(group_ids):
             min_time = float('inf')
             pos = [float('inf'),float('inf'),float('inf')]
             #earliest_edep_pos = [float('inf'), float('inf'), float('inf')]
-            for i, p in enumerate(self.event['particles'][0]):
+            for i, p in enumerate(event['particles']):
                 if p.group_id() == group_id:
                     # consider time and take earliest
                     #print(' p.first_step: \t x: %.2f \t y: %.2f \t z: %.2f \t t: %.2f' %(p.first_step().x(), p.first_step().y(), p.first_step().z(), p.first_step().t()))
@@ -473,28 +484,28 @@ class Analyser():
                         min_time = p.first_step().t()
                         pos = [p.first_step().x(), p.first_step().y(), p.first_step().z(), p.first_step().t()]
             if np.any(np.isinf(pos)):
-                print(' Shower has no physical edep [event:', self.event['index'], ']')
+                print(' Shower has no physical edep [event:', event['index'], ']')
             earliest_edep_pos.append(pos)
             #print(' earliest: ', pos)
-        
+
         # Loop over all clusters and get voxels for every electron induced shower
         # Note: using parser 'parse_cluster3d_full', one can obtain a cluster via
-        # clusters = self.event['cluster_label'] where the entries are
+        # clusters = event['cluster_label'] where the entries are
         # x,y,z,batch_id,voxel_value,cluster_id,group_id,semantic_type
         voxels = [[] for _ in range(len(group_ids))]
         edeps  = [[] for _ in range(len(group_ids))]
-        clusters = self.event['cluster_label']
+        clusters = event['cluster_label']
         for cluster_index, edep in enumerate(clusters):
             for group_index, group in enumerate(group_ids):
                 if edep[6] == group:
                     voxels[group_index].append([edep[0],edep[1],edep[2]])
                     edeps[group_index].append(edep[4])
-        
+
         # Assign the electron induced shower's properties
         counter = 0
-        for i, p in enumerate(self.event['particles'][0]):
+        for i, p in enumerate(event['particles']):
             #print(p.dump())
-            if (p.pdg_code() == 11 or p.pdg_code() == -11) and p.parent_pdg_code() == 0:       
+            if (p.pdg_code() == 11 or p.pdg_code() == -11) and p.parent_pdg_code() == 0:
                 _pid        = int(p.id())
                 _group_id   = p.group_id()
                 _start      = [p.x(), p.y(), p.z(), p.t()] # creation vertex position (x,y,z,t)
@@ -510,24 +521,24 @@ class Analyser():
                 # TODO: check that only edeps within LAr volume are counted
                 electron_showers.append(ElectronShower(pid=_pid,group_id=_group_id,start=_start,first_step=_first_step,first_edep=_first_edep,mom_init=_mom_init,direction=_dir,voxels=_voxels,einit=_einit,edeps=_edeps,edep_tot=_edep_tot))
                 counter += 1
-        self.output['electronShowers'] = electron_showers
+        output['electronShowers'] = electron_showers
         return
-        
-        
-    def find_true_photon_showers(self, event):
+
+
+    def find_true_photon_showers(self, event, output):
         '''
-        Obtain true information about showers induced by photons from a pi0 decay and dump it to self.output['photonShowers'].
+        Obtain true information about showers induced by photons from a pi0 decay and dump it to output['photonShowers'].
         '''
         #print(' ========================================================================== ')
-        #print(' event_id: ', self.event['index'])
+        #print(' event_id: ', event['index'])
         photon_showers  = []
         compton_showers = []
-        
+
         # First, produce list of n lists (n=number of photons from pi0 decay) with ids, track_ids and group_ids
         ids_of_true_photons  = []
         tids_of_true_photons = []
         group_ids            = []
-        for i, p in enumerate(self.event['particles'][0]):
+        for i, p in enumerate(event['particles']):
             if p.parent_pdg_code() == 111 and p.pdg_code() == 22:
                 ids_of_true_photons.append(p.id())
                 tids_of_true_photons.append(p.track_id())
@@ -535,14 +546,14 @@ class Analyser():
         #print(' ids_of_true_photons:           ', ids_of_true_photons)
         #print(' tids_of_true_photons:          ', tids_of_true_photons)
         #print(' group_ids:                     ', group_ids)
-        
+
         # Loop over all clusters and get voxels for every photon induced shower
         # Note: using parser 'parse_cluster3d_full', one can obtain a cluster via
-        # clusters = self.event['cluster_label'] where the entries are
+        # clusters = event['cluster_label'] where the entries are
         # x,y,z,batch_id,voxel_value,cluster_id,group_id,semantic_type
         voxels = [[] for _ in range(len(group_ids))]
         edeps  = [[] for _ in range(len(group_ids))]
-        clusters = self.event['cluster_label']
+        clusters = event['cluster_label']
         for cluster_index, edep in enumerate(clusters):
             for group_index, group in enumerate(group_ids):
                 if edep[6] == group:
@@ -553,18 +564,18 @@ class Analyser():
         ids_of_particles_in_shower  = [[ID] for counter, ID in enumerate(ids_of_true_photons)]
         tids_of_particles_in_shower = [[ID] for counter, ID in enumerate(ids_of_true_photons)]
         for sh_index in range(len(ids_of_true_photons)):
-            for i, p in enumerate(self.event['particles'][0]):
+            for i, p in enumerate(event['particles']):
                 if p.parent_id() in ids_of_particles_in_shower[sh_index] and p.id() not in ids_of_particles_in_shower[sh_index]:
                     ids_of_particles_in_shower[sh_index].append(p.id())
                 if p.parent_track_id() in tids_of_particles_in_shower[sh_index] and p.track_id() not in tids_of_particles_in_shower[sh_index]:
                     tids_of_particles_in_shower[sh_index].append(p.track_id())
         #print(' ids_of_particles_in_shower:    ', ids_of_particles_in_shower)
         #print(' tids_of_particles_in_shower:   ', tids_of_particles_in_shower)
-        
+
         # Get IDs and track IDs of photons which make compton scattering (note: including photons produced in EM shower, not only photons from pi0 decays)
         ids_of_photons_making_compton  = []
         tids_of_photons_making_compton = []
-        for i, p in enumerate(self.event['particles'][0]):
+        for i, p in enumerate(event['particles']):
             if p.parent_id() in ids_of_true_photons:
                 #print(' PARENT (', p.parent_id(), ') in ids_of_true_photons... ')
                 if p.pdg_code() == 11:
@@ -589,15 +600,15 @@ class Analyser():
         # Get IDs and track IDs of photons which make compton scattering (note: including those compton scattered electrons produced in an EM shower, not only those scattered with a photon from a pi0 decay)
         compton_electron_tids = []
         for i, TID in enumerate(tids_of_photons_making_compton):
-            for j, p in enumerate(self.event['particles'][0]):
+            for j, p in enumerate(event['particles']):
                 if p.parent_track_id() == TID and p.track_id() not in compton_electron_tids:
                     compton_electron_tids.append(p.track_id())
         #print(' compton_electron_tids: ', compton_electron_tids)
-        
+
         # Get track IDs of photons which of photons which make compton scattering (note: in contrast to above, only photons from pi0 decays which make compton scattering are included here)
         tids_of_photons_with_primary_compton = []
         for i, TID in enumerate(compton_electron_tids):
-            for j, p in enumerate(self.event['particles'][0]):
+            for j, p in enumerate(event['particles']):
                 #if p.track_id() == TID:
                     #print(p.dump())
                 if p.parent_track_id() in tids_of_true_photons:
@@ -611,7 +622,7 @@ class Analyser():
         for j, IDs in enumerate(ids_of_particles_in_shower):
             min_time = float('inf')
             first_step = [float('inf'), float('inf'), float('inf')]
-            for i, p in enumerate(self.event['particles'][0]):
+            for i, p in enumerate(event['particles']):
                 if p.id() in IDs:
                     #print(' p.first_step: \t x: %.2f \t y: %.2f \t z: %.2f \t t: %.2f' %(p.first_step().x(), p.first_step().y(), p.first_step().z(), p.first_step().t()))
                     first_step = [p.first_step().x(), p.first_step().y(), p.first_step().z(), p.first_step().t()]
@@ -624,7 +635,7 @@ class Analyser():
         # Assign the photon induced shower's properties
         counter = 0
         for i, ID in enumerate(ids_of_true_photons):
-            for j, p in enumerate(self.event['particles'][0]):
+            for j, p in enumerate(event['particles']):
                 if p.id() == ID:
                     _pid        = int(p.id())
                     _group_id   = p.group_id()
@@ -642,12 +653,12 @@ class Analyser():
                     photon_showers.append(PhotonShower(pid=_pid,group_id=_group_id,start=_start,first_step=_first_step,first_edep=_first_edep,mom_init=_mom_init,direction=_dir,voxels=_voxels,einit=_einit,edeps=_edeps,edep_tot=_edep_tot))
                     counter += 1
                     break
-        self.output['photonShowers'] = photon_showers
-        
+        output['photonShowers'] = photon_showers
+
         # Assign the photon induced shower's properties (for showers where the initiating photon makes Compton Scattering)
         counter = 0
         for i, TID in enumerate(tids_of_photons_with_primary_compton):
-            for j, p in enumerate(self.event['particles'][0]):
+            for j, p in enumerate(event['particles']):
                 if p.track_id() == TID:
                     _pid        = int(p.id())
                     _group_id   = p.group_id()
@@ -665,20 +676,20 @@ class Analyser():
                     compton_showers.append(ComptonShower(pid=_pid,group_id=_group_id,start=_start,first_step=_first_step,first_edep=_first_edep,mom_init=_mom_init,direction=_dir,voxels=_voxels,einit=_einit,edeps=_edeps,edep_tot=_edep_tot))
                     counter += 1
                     break
-        self.output['comptonShowers'] = compton_showers
-        
+        output['comptonShowers'] = compton_showers
+
         return
-    
-    
-    def extract_reco_information(self, event):
+
+
+    def extract_reco_information(self, event, output):
         '''
         Obtain reconstructed informations about pi0s and gammas originated from pi0 decays and dump
         it to self.reco_info['<variable>']
         '''
 
-        self.reco_info['ev_id']                  = self.event['index']              # [-]
-        self.reco_info['n_pi0']                  = len(self.output['matches'])      # [-]
-        self.reco_info['n_gammas']               = 2.*len(self.output['matches'])   # [-]
+        self.reco_info['ev_id']                  = event['index']              # [-]
+        self.reco_info['n_pi0']                  = len(output['matches'])      # [-]
+        self.reco_info['n_gammas']               = 2.*len(output['matches'])   # [-]
         #self.reco_info['matches']                = []                               # [-]
         #self.reco_info['gamma_mom']              = []                               # [MeV/c]
         #self.reco_info['gamma_dir']              = []                               # [x,y,z]
@@ -691,14 +702,14 @@ class Analyser():
         #self.reco_info['gamma_n_voxels']         = []                               # [-]
         #self.reco_info['gamma_angle']            = []                               # [rad]
         #self.reco_info['pi0_mass']               = []                               # [MeV/c2]
-        self.reco_info['OOFV']                   = self.output['OOFV']              # [-]
+        self.reco_info['OOFV']                   = output['OOFV']              # [-]
 
-        showers = self.output['showers']
-        
+        showers = output['showers']
+
         # Note: match = if two showers point to the same point and this point is close to a track
         for match in range(self.reco_info['n_pi0']):
-            match_1 = self.output['matches'][match][0]
-            match_2 = self.output['matches'][match][1]               
+            match_1 = output['matches'][match][0]
+            match_2 = output['matches'][match][1]
             self.reco_info['matches'].append(match_1)
             self.reco_info['matches'].append(match_2)
             self.reco_info['gamma_mom'].append(np.array(showers[match_1].direction*showers[match_1].energy))
@@ -717,20 +728,19 @@ class Analyser():
             self.reco_info['gamma_n_voxels_mask'].append(showers[match_2].voxels.size)
 
             # Obtain the showers edeps (x,y,z,batch_id,energy_deposition)
-            mask = self.output['shower_mask']                           # mask for all edeps classified as shower
-            voxels_1 = self.output['showers'][match_1].voxels           # indices in the mask for the 1st match
-            voxels_2 = self.output['showers'][match_2].voxels           # indices in the mask for the 2nd match
-            edeps_1 = self.output['energy'][mask][voxels_1]             # all edeps for the 1st match
-            edeps_2 = self.output['energy'][mask][voxels_2]             # all edeps for the 2nd match
+            voxels_1 = output['showers'][match_1].voxels           # indices in the mask for the 1st match
+            voxels_2 = output['showers'][match_2].voxels           # indices in the mask for the 2nd match
+            edeps_1 = output['energy'][voxels_1]             # all edeps for the 1st match
+            edeps_2 = output['energy'][voxels_2]             # all edeps for the 2nd match
             self.reco_info['gamma_voxels'].append(np.array(edeps_1))
             self.reco_info['gamma_voxels'].append(np.array(edeps_2))
             self.reco_info['gamma_n_voxels'].append(len(edeps_1))
             self.reco_info['gamma_n_voxels'].append(len(edeps_2))
 
         # Reconstructed angle and pi0 mass
-        for match in self.output['matches']:
+        for match in output['matches']:
             idx1, idx2 = match
-            s1, s2 = self.output['showers'][idx1], self.output['showers'][idx2]
+            s1, s2 = output['showers'][idx1], output['showers'][idx2]
             e1, e2 = s1.energy, s2.energy
             t1, t2 = s1.direction, s2.direction
             #if np.any(np.isnan(t1)) or np.any(np.isnan(t2)):
@@ -744,7 +754,7 @@ class Analyser():
                 print(' WARNING: shower direction not assigned: \t dir_1: ', t1, ' \t dir_2: ', t2)
                 print(' \t -> set costheta = 1 and pi0_mass = 0 ')
                 costheta = 1.
-                
+
             if abs(costheta) > 1.:
                 print(' WARNING: costheta = np.dot(sh1.dir, sh2.dir) = ', costheta, ' > 1.')
                 print(' \t -> set costheta = 1 and pi0_mass = 0 ')

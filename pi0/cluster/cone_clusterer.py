@@ -119,7 +119,7 @@ class ConeClusterer:
     Clustering module using cone-clustering.
     """
 
-    def __init__(self, params={}):
+    def __init__(self, predict_mode='score', scale_embedding=1.0, scale_height=14.107334041, scale_slope=5.86322059, **kwargs):
         """
         Initializer for ConeCluster Class.
 
@@ -128,12 +128,14 @@ class ConeClusterer:
             - params (dict): list of parameters specific to cone clustering.
         """
         self._cones = []
-        # Used only for 'contain' mode.
-        self.scale_height = params.get('scale_height', 14.107334041)
-        self.scale_slope = params.get('scale_slope', 5.86322059)
+        self.predict_mode = predict_mode
+
         # Used only for 'score' mode (default).
-        self.scale_embedding = params.get('scale_embedding', 1.0)
-        self.predict_mode = params.get('predict_mode', 'score')
+        self.scale_embedding = scale_embedding
+
+        # Used only for 'contain' mode.
+        self.scale_height = scale_height
+        self.scale_slope = scale_slope
 
     def make_cone(self, coords, vertex, direction, name='None'):
         """

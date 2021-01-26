@@ -1,177 +1,173 @@
-import numpy as np
 import yaml
-import torch
 from copy import copy
+import numpy as np
 from larcv import larcv
-from scipy.spatial import distance
-from .directions.estimator import FragmentEstimator, DirectionEstimator
+
+from mlreco.main_funcs import process_config, prepare, apply_event_filter
+from mlreco.utils.ppn import uresnet_ppn_type_point_selector
+
+from .utils.data_structure import Shower
+from .utils.logger import Pi0DataLogger
+from .analyse.analyser import Analyser
+
+from .cluster.dbscan import DBSCANCluster
 from .cluster.start_finder import StartPointFinder
 from .cluster.cone_clusterer import ConeClusterer
-from .cluster.dbscan import DBSCANCluster
+
+from .directions.estimator import DirectionEstimator
 
 from .identification.matcher_old import Pi0Matcher # Pi0 vertex is chosen as the PPN point closest to the CPA of two showers
 #from .identification.matcher_new import Pi0Matcher # Pi0 vertex is chosen as the PPN point which is in 'best' angular agreement with a pair of showers
-from .identification.PID import ElectronPhoton_Separation
-from .analyse.analyser import Analyser
-from mlreco.main_funcs import process_config, prepare
-from mlreco.utils import CSVData
-from mlreco.utils.ppn import uresnet_ppn_type_point_selector
-from mlreco.utils.gnn.cluster import cluster_direction
-from .utils.logger import Pi0DataLogger
+from .identification.PID import ElectronPhotonSeparator
 
-# Class that contains all the reco shower information
-class Shower:
-    def __init__(self, start=-np.ones(3), direction=-np.ones(3), voxels=[], energy=-1., pid=-1, group_pred=-1, L_e=-1., L_p=-1.):
-        self.start      = start
-        self.direction  = direction
-        self.voxels     = voxels
-        self.energy     = energy
-        self.pid        = int(pid)
-        self.group_pred = int(group_pred)
-        self.L_e        = L_e # electron (positron) likelihood fraction
-        self.L_p        = L_p # photon likelihood fraction
-
-    def __str__(self):
-        return """
-        Shower ID  : {}
-        Start point: ({:0.2f},{:0.2f},{:0.2f})
-        Direction  : ({:0.2f},{:0.2f},{:0.2f})
-        Voxel count: {}
-        Energy     : {}
-        Group_pred : {}
-        """.format(self.pid, *self.start, *self.direction, len(self.voxels), self.energy, self.group_pred)
+from .visualization.plotting import draw_event
 
 
-# Classes that contain the PPN predicted points (one class for every semantic type)
-# TODO: Instead of having 5 classes for every semantic type, make one class 'PPN_Predictions' with all shower, track, michel, delta, LEScatter predictions
-class ShowerPoints():
-    def __init__(self, ppns=-np.ones(3), shower_score=-1., shower_id=-1):
-        self.ppns = ppns
-        self.shower_score = shower_score
-        self.shower_id = int(shower_id)
-    def __str__(self):
-        return """ Track  ID {}
-        PPN point  : ({:0.2f},{:0.2f},{:0.2f})
-        Shower score: {}""".format(self.shower_id, *self.ppns, self.shower_score)
-class TrackPoints():
-    def __init__(self, ppns=-np.ones(3), track_score=-1., track_id=-1):
-        self.ppns = ppns
-        self.track_score = track_score
-        self.track_id = int(track_id)
-    def __str__(self):
-        return """ Track  ID {}
-        PPN point  : ({:0.2f},{:0.2f},{:0.2f})
-        Track score: {}""".format(self.track_id, *self.ppns, self.track_score)
-class MichelPoints():
-    def __init__(self, ppns=-np.ones(3), michel_score=-1., michel_id=-1):
-        self.ppns = ppns
-        self.michel_score = michel_score
-        self.michel_id = int(michel_id)
-    def __str__(self):
-        return """ Track  ID {}
-        PPN point  : ({:0.2f},{:0.2f},{:0.2f})
-        Michel score: {}""".format(self.michel_id, *self.ppns, self.michel_score)
-class DeltaPoints():
-    def __init__(self, ppns=-np.ones(3), delta_score=-1., delta_id=-1):
-        self.ppns = ppns
-        self.delta_score = delta_score
-        self.delta_id = int(delta_id)
-    def __str__(self):
-        return """ Track  ID {}
-        PPN point  : ({:0.2f},{:0.2f},{:0.2f})
-        Delta score: {}""".format(self.delta_id, *self.ppns, self.delta_score)
-class LEScatPoints():
-    def __init__(self, ppns=-np.ones(3), LEScat_score=-1., LEScat_id=-1):
-        self.ppns = ppns
-        self.LEScat_score = LEScat_score
-        self.LEScat_id = int(LEScat_id)
-    def __str__(self):
-        return """ Track  ID {}
-        PPN point  : ({:0.2f},{:0.2f},{:0.2f})
-        LEScat score: {}""".format(self.LEScat_id, *self.ppns, self.LEScat_score)
-
-
-# Chain object class that loads and stores the chain parameters
 class Pi0Chain:
+    '''
+    Class that loads the Pi0 reconstruction configuration,
+    intializes the chain modules and runs the inference.
+    '''
 
     # Class constants
-    IDX_SEMANTIC_ID = -1
     IDX_CLUSTER_ID = 5
     IDX_GROUP_ID = 6
 
-    def __init__(self, io_cfg, chain_cfg, verbose=False):
+    def __init__(self, chain_cfg):
         '''
-        Initializes the chain from the configuration file
+        Initialize the Pi0 reconstruction modules
         '''
-        # Initialize the data loader
-        io_cfg = yaml.load(io_cfg,Loader=yaml.Loader)
+        # Process chain configuration, enforce logic
+        self._process_config(chain_cfg)
 
-        # Save config, initialize output
-        self.cfg       = chain_cfg
-        self.verbose   = verbose
-        self.event     = None
-        self.output    = {}
-        self.true_info = {}
-        self.reco_info = {}
-
-        # Initialize log
-        #print('Initialized Pi0 reconstruction chain')
-        #self._log = Pi0DataLogger(chain_cfg['name'])
-
-        # TODO: Check if this is needed any longer # rberner
-        log_path = chain_cfg['name']+'_log.csv'
-        log_path = 'masses_fiducialized_' + str(chain_cfg['fiducialize']) + 'px.csv'
-        print('Initialized Pi0 mass chain, log path:', log_path)
-        self._log = CSVData(log_path)
-        self._keys = ['event_id', 'pion_id', 'pion_mass']
-
-        # If a network is specified, initialize the network
-        self.network = False
-        if chain_cfg['segment'] == 'uresnet' or chain_cfg['shower_start'] == 'ppn' or chain_cfg['shower_start'] == 'gnn':
-            self.network = True
-            with open(chain_cfg['net_cfg']) as cfg_file:
-                net_cfg = yaml.load(cfg_file,Loader=yaml.Loader)
-            io_cfg['model'] = net_cfg['model']
-            io_cfg['trainval'] = net_cfg['trainval']
+        # Initialize logger/analyser
+        self._logger = Pi0DataLogger(self._name) # Francois'
+        if self._analyse:
+            self._analyser = Analyser() # Roman's
 
         # Initialize the fragment identifier
-        if chain_cfg['shower_fragment'] == 'dbscan':
-            self.frag_est = DBSCANCluster()
+        if self._shower_fragment == 'dbscan':
+            self._frag_est = DBSCANCluster(**self._shower_fragment_args)
+
+        # Initliaze the start point finder
+        if self._shower_start == 'curv':
+            self._start_finder = StartPointFinder(**self._shower_start_args)
 
         # If a direction estimator is requested, initialize it
-        if chain_cfg['shower_direction'] != 'label':
-            self.dir_est = DirectionEstimator()
+        if self._shower_direction != 'label':
+            self._dir_est = DirectionEstimator(**self._shower_direction_args)
 
         # If a clusterer is requested, initialize it
-        if chain_cfg['shower_cluster'] in ['cone', 'gnn']:
-            self.clusterer = ConeClusterer()
+        if self._shower_cluster != 'label':
+            self._clusterer = ConeClusterer(**self._shower_cluster_args)
+
+        if self._shower_id == 'edep':
+            self._identifier = ElectronPhotonSeparator(**self._shower_id_args)
 
         # If a pi0 identifier is requested, initialize it
-        if (chain_cfg['shower_match'] == 'proximity' or chain_cfg['shower_match'] == 'ppn'):
-            self.matcher = Pi0Matcher()
+        if self._shower_match != 'label':
+            self._matcher = Pi0Matcher(**self._shower_match_args)
 
-        # Pre-process configuration
-        process_config(io_cfg)
+        # Instantiate "handlers" (IO/inference tools)
+        process_config(self._mlreco_cfg)
+        self._hs = prepare(self._mlreco_cfg)
+        self._data_set = iter(self._hs.data_io)
 
-        # Instantiate "handlers" (IO tools)
-        self.hs = prepare(io_cfg)
-        self.data_set = iter(self.hs.data_io)
+    def _process_config(self, chain_cfg):
+        '''
+        Processes the chain configuration file, enforces some basic logic
+        between the modules used in the chain.
+        '''
+        # Process the configuration flags
+        chain_cfg = yaml.safe_load(chain_cfg, )
+        self._name    = chain_cfg.get('name', 'pi0_reco_chain')
+        self._verbose = chain_cfg.get('verbose', False)
+        self._analyse = chain_cfg.get('analyse', False)
+
+        # Initialize the pi0 reconstruction modules, save module parameters if any
+        module_map = {'segment': ['label', 'uresnet'],
+                      'deghost': ['label', 'uresnet', 'none'],
+                      'charge2e': ['label', 'cst', 'average', 'none'],
+                      'shower_fragment': ['label', 'dbscan', 'gnn'],
+                      'shower_primary': ['label', 'gnn'],
+                      'shower_start': ['label', 'curv', 'ppn'],
+                      'shower_direction': ['label', 'geo'],
+                      'shower_cluster': ['label', 'cone', 'gnn'],
+                      'shower_energy': ['label', 'pixel_sum'],
+                      'shower_id': ['label', 'edep', 'gnn', 'none'],
+                      'shower_match': ['label', 'proximity', 'ppn', 'gnn'],
+                      'fiducial': ['none', 'edge_dist']}
+
+        self._network = False
+        assert 'modules' in chain_cfg, 'modules not specified in chain configuration'
+        mod_cfg = chain_cfg['modules']
+        self._print(f'Will run module following sequence of modules:')
+        for module, keys in module_map.items():
+            assert module in mod_cfg, f'{module} not specified under modules'
+            assert 'method' in mod_cfg[module], f'method not specified under {module}'
+            method = mod_cfg[module]['method']
+            assert method in keys, f'{module} method not recognized: {method}. Must be one of: {keys}'
+            setattr(self, f'_{module}', method)
+            self._print(f' - {module} with method {method}')
+            setattr(self, f'_{module}_args', {k:v for k, v in mod_cfg[module].items() if k != 'method'})
+            if 'uresnet' or 'ppn' or 'gnn' in method: self._network = True
+
+        # TODO: Enforce logical order of modules
 
 
-    def hs(self):
-        return self.hs
+        # Initialize the mlreco configuration
+        assert 'mlreco' in chain_cfg, 'mlreco not specified in chain configuration'
+        mlreco_cfg = chain_cfg['mlreco']
+        assert 'cfg_path' in mlreco_cfg, 'cfg_path not speicified under mlreco'
+        with open(mlreco_cfg['cfg_path']) as cfg_file:
+            self._mlreco_cfg = yaml.load(cfg_file, Loader=yaml.Loader)
+            self._mlreco_cfg['iotool']['batch_size'] = mlreco_cfg.get('batch_size', 1)
+            assert 'iotool' in self._mlreco_cfg, 'mlreco_cfg does not have an iotool entry'
+            if 'sampler' in self._mlreco_cfg['iotool']:
+                del self._mlreco_cfg['iotool']['sampler']
+            if 'data_keys' in mlreco_cfg:
+                self._mlreco_cfg['iotool']['dataset']['data_keys'] = mlreco_cfg['data_keys']
+            if self._network:
+                assert 'model' in self._mlreco_cfg and 'trainval' in self._mlreco_cfg
+                self._mlreco_cfg['trainval']['train'] = False
+                if 'model_path' in mlreco_cfg:
+                    self._mlreco_cfg['trainval']['model_path'] = mlreco_cfg['model_path']
+
+        # Initialize outputs
+        self._output    = {}
 
 
-    def data_set(self):
-        return self.data_set
+    def _print(self, message):
+        '''
+        Only prints message in verbose mode.
+        '''
+        if self._verbose:
+            print(message)
 
 
-    # def log(self, event, output):
-    #     self._log.log(event, output)
-    def log(self, eid, pion_id, pion_mass):
-        self._log.record(self._keys, [eid, pion_id, pion_mass])
-        self._log.write()
-        self._log.flush()
+    def _log(self, event, output):
+        '''
+        Log event and output truth/reco information for further analysis.
+        '''
+        self._logger.log(event, output)
+
+
+    def apply_event_filter(self, entries):
+        '''
+        Narrow the dataset down to the entries specified.
+        '''
+        apply_event_filter(self._hs, entries)
+        self._data_set = iter(self._hs.data_io)
+
+
+    @staticmethod
+    def get_cluster_label(data, clusts, column):
+        labels = []
+        for c in clusts:
+            v, cts = np.unique(data[c,column], return_counts=True)
+            labels.append(int(v[np.argmax(cts)]))
+
+        return np.array(labels)
 
 
     def run(self):
@@ -180,44 +176,9 @@ class Pi0Chain:
         information to Pi0 masses for events that contain one
         or more Pi0 decay.
         '''
-        n_events = len(self.hs.data_io)
+        n_events = len(self._hs.data_io)
         for i in range(n_events):
             self.run_loop()
-
-
-    def select_overlap(self, a0, a1, overlap=True, dim=3):
-        '''
-        Given 2 arrays of shape (N,dim+) where dim indicates x,y,z voxel coordinates,
-        compute the common points across 2 arrays and return index that corresponds to a0
-        '''
-        coords0 = a0[:,:dim].astype(np.int16)
-        coords1 = a1[:,:dim].astype(np.int16)
-        if overlap:
-            idx = [ i for i in range(len(coords0)) if (coords0[i] == coords1).all(axis=1).any() ]
-        else:
-            idx = [ i for i in range(len(coords0)) if not (coords0[i] == coords1).all(axis=1).any() ]
-        return idx
-
-
-    def layout(self, width=1024, height=768, xrange=(0,768), yrange=(0,768), zrange=(0,768), dark=False, aspectmode='cube' ):
-        import plotly.graph_objs as go
-
-        layout = go.Layout(
-            showlegend=True,
-            legend=dict(x=1.01,y=0.95),
-            width=width,
-            height=height,
-            hovermode='closest',
-            margin=dict(l=0,r=0,b=0,t=0),
-            #template='plotly_dark',
-            uirevision = 'same',
-            scene = dict(xaxis = dict(nticks=10, range = xrange, showticklabels=True, title='x'),
-                         yaxis = dict(nticks=10, range = yrange, showticklabels=True, title='y'),
-                         zaxis = dict(nticks=10, range = zrange, showticklabels=True, title='z'),
-                         aspectmode=aspectmode)
-        )
-        if dark: layout.template = 'plotly_dark'
-        return layout
 
 
     def run_loop(self):
@@ -226,167 +187,128 @@ class Pi0Chain:
         from 3D charge information to Pi0 masses for events that
         contain one or more Pi0 decay.
         '''
-
         # Reset output
-        self.output = {}
+        self._output = {}
 
         # Load data
-        if not self.network:
-            event = next(self.data_set)
-            event_id = event['index'][0]
+        if not self._network:
+            event = next(self._data_set)
         else:
-            event, self.output['forward'] = self.hs.trainer.forward(self.data_set)
+            event, self._output['forward'] = self._hs.trainer.forward(self._data_set)
             for key in event.keys():
-                if key != 'particles':
-                    event[key] = event[key][0]
-            event_id = event['index']
+                event[key] = event[key][0] # TODO: Assumes batch_size = 1
+            for key in self._output['forward'].keys():
+                self._output['forward'][key] = self._output['forward'][key][0] # TODO: Assumes batch_size = 1
 
-        self.event = event
+        # Run the reconstruction modules
+        self.run_modules(event)
 
+        # Analyser module for reconstructed quantities
+        # self._log(event, self._output)
+        if self._analyse:
+            self._analyser.record(event, self._output)
+
+
+    def run_modules(self, event):
+        '''
+        Runs the reconstruction modules
+        '''
         # Check input
         self.infer_inputs(event)
 
-        # Set the semantics
+        # Set the semantics, abort if no shower voxels are found in the image
         self.infer_semantics(event)
-
-        # Analyser module for true qantities
-        if (self.cfg['analyse_true']):
-            self.analyser = Analyser()
-            Analyser.initialize_true(self)
-            Analyser.extract_true_information(self, event)
-            Analyser.find_true_electron_showers(self, event)
-            Analyser.find_true_photon_showers(self, event)
-
-        # Initialise also analyser module for reconstructed quantities
-        if (self.cfg['analyse_reco']):
-            Analyser.initialize_reco(self)
+        if not len(self._output['shower_mask']):
+            self._print('No shower voxel found in event {}'.format(event['index']))
+            return
 
         # Filter out ghosts
-        # TODO: This function can be removed from the pixel branch
         self.filter_ghosts(event)
-
-        # Obtain points from PPN
-        if (self.cfg['shower_start'] == 'ppn' or self.cfg['shower_match'] == 'ppn'):
-            self.obtain_ppn_points(event)
 
         # Reconstruct energy
         self.charge_to_energy(event)
 
-        # Check data dimensions
-        assert self.output['energy'].shape == self.output['charge'].shape
-        assert self.output['energy'].shape == self.output['segment'].shape
-
-        # Identify cluster start points, skip if there are less than 2 (no pi0)
-        self.reconstruct_cluster_starts(event)
-        if len(self.output['showers']) < 1: # TODO: 1 only for testing purposes; change to 2
-            if self.verbose:
-                print('< 1 shower start points found in event', event_id)
-            return
-
-        # Form shower fragments
+        # Form shower fragments, abort if there are no shower fragments
         self.reconstruct_shower_fragments(event)
-        if len(self.output['showers']) < 1:
-            if self.verbose:
-                print('< 1 shower fragment found in event', event_id)
+        if not len(self._output['shower_fragments']):
+            self._print('No shower fragment found in event {}'.format(event['index']))
             return
 
-        # Reconstruct shower direction vectors
+        # Identify primary fragments
+        self.reconstruct_shower_primaries(event)
+        if not len(self._output['showers']):
+            self._print('No shower primary found in event {}'.format(event['index']))
+
+        # Identify fragment start points
+        self.reconstruct_shower_starts(event)
+
+        # Reconstruct fragment direction vectors
         self.reconstruct_shower_directions(event)
 
-        # Reconstruct shower cluster
+        # Cluster shower fragments together into shower instances
         self.reconstruct_shower_cluster(event)
 
         # Reconstruct shower energy
         self.reconstruct_shower_energy(event)
 
-        # Identify shower start points, skip if there are less than 2 (no pi0)
-        self.reconstruct_shower_starts(event)
-        if len(self.output['showers']) < 1: # TODO: 1 only for testing purposes; change to 2
-            if self.verbose:
-                print('< 1 shower start points found in event', event_id)
-            return
-
         # Reconstruct shower likelihood fractions (electron/positron like or photon like)
-        self.obtain_likelihood(event)
+        self.reconstruct_shower_id(event)
 
-        # Identify pi0 decays
-        #print(' ------------------------------ ')
-        #print(' Event ID: ', event_id)
-        self.identify_pi0(event)
-        if not len(self.output['matches']):
-            if self.verbose:
-                print('No pi0 found in event', event_id)
-            #self.log(self.event, self.output)
+        # Make fiducialization (put shower number to self._output['OOFV'] if >0 edep of the shower is OOFV)
+        # Abort if there are less than two showers
+        self.apply_fiducial_cut(event)
+        if len(self._output['showers']) < 3:
+            self._print('Not enough showers found in event {} to form a pi0'.format(event['index']))
             return
 
-        # Make fiducialization (put shower number to self.output['OOFV'] if >0 edep of the shower is OOFV)
-        # This is relatively strict -> might want to add the shower to OOFV only if a certain fraction of all edeps is OOFV
-        # TODO: Check whether this function is still needed
-        self.fiducialize(event)
+        # Identify pi0 decays, abort mass reconstruction if no matches are found
+        self.identify_pi0(event)
+        if not len(self._output['matches']):
+            self._print('No pi0 found in event {}'.format(event['index']))
+            return
 
         # Compute masses
-        masses = self.pi0_mass()
+        self.pi0_mass()
 
-        # Log data
-        #self.log(self.event, self.output)
-
-        # Log masses
-        for i, m in enumerate(masses):
-            self.log(event_id, i, m)
-
-        # Analyser module for reconstructed quantities
-        if (self.cfg['analyse_reco']):
-            Analyser.extract_reco_information(self, event)
-
-    def infer_inputs(self,event):
-        if self.cfg['deghost'] == "label" or self.cfg['segment'] == 'label':
-            assert 'segment_label' in event
-        if self.cfg['charge2energy'] == 'label':
-            assert 'energy_label' in event
-            self.output['energy_label'] = copy(event['energy_label'])
-        if 'label' in [ self.cfg['shower_fragment'], self.cfg['shower_direction'],
-                        self.cfg['shower_cluster'], self.cfg['shower_energy'] ]:
-            assert self.cfg['shower_start'] == 'label'
-        if self.cfg['shower_start'] == 'label':
-            assert 'particles' in event
-        if self.cfg['shower_fragment'] == 'label' or self.cfg['shower_cluster'] == 'label':
+    def infer_inputs(self, event):
+        '''
+        Ensures the data contains the necessary entries for the chain configuration.
+        Copy the input as the event charge.
+        '''
+        if self._deghost == 'label' or self._segment == 'label':
+            assert 'segment_label' in event, 'No segment_label data in the input, needed for true semantics'
+            assert event['segment_label'].shape == event['input_data'].shape
+            self._output['segment_label'] = copy(event['segment_label'])
+        if self._charge2e == 'label':
+            assert 'energy_label' in event, 'No energy_label data in the input, needed for true energy'
+            assert event['energy_label' ].shape == event['input_data'].shape
+            self._output['energy_label'] = copy(event['energy_label'])
+        if self._shower_fragment == 'label' or self._shower_cluster == 'label' or True: # TODO: RESET THIS
             assert 'cluster_label' in event
-            self.output['cluster_label'] = copy(event['cluster_label'])
+            assert event['cluster_label' ].shape[0] == event['input_data'].shape[0]
+            self._output['cluster_label'] = copy(event['cluster_label'])
+        if 'label' in [ self._shower_fragment, self._shower_direction, self._shower_cluster, self._shower_energy ]:
+            assert self._shower_start == 'label'
+        if self._shower_start == 'label':
+            assert 'particles' in event
 
-        self.output['charge'] = copy(event['input_data'])
-
-        assert not 'segment_label' in event or event['segment_label'].shape == event['input_data'].shape
-        assert not 'energy_label'  in event or event['energy_label' ].shape == event['input_data'].shape
+        self._output['charge'] = copy(event['input_data'])
 
 
     def infer_semantics(self, event):
-        if self.cfg['segment'] == 'label':
-            self.output['segment'] = event['segment_label']
+        '''
+        Process the semantic classification followingn the configuration.
+        Create a mask corresponding to the shower voxels.
+        '''
+        if self._segment == 'label':
+            # The segmentation is the exact true segmentation
+            self._output['segment'] = event['segment_label']
+        elif self._segment == 'uresnet':
+            # Get the segmentation output of the network, argmax to determine most probable label
+            self._output['segment'] = copy(event['segment_label'])
+            self._output['segment'][:,-1] = np.argmax(self._output['forward']['segmentation'], axis=1)
 
-        elif self.cfg['segment'] == 'uresnet':
-            # Get the segmentation output of the network
-            res = self.output['forward']
-            # Argmax to determine most probable label
-            self.output['segment'] = copy(event['segment_label'])
-            self.output['segment'][:,-1] = np.argmax(res['segmentation'][0], axis=1)
-        else:
-            raise ValueError('Semantic segmentation method not recognized:', self.cfg['segment'])
-
-        self.output['shower_mask'] = np.where(self.output['segment'][:,-1] == larcv.kShapeShower)
-        for tag in ['cluster_label']:
-            if not tag in self.output: continue
-            segment = self.output['segment']
-            shower_segment = segment[self.output['shower_mask']]
-            masked_label = []
-            label = self.output[tag]
-            for idx, particle in enumerate(event['particles'][0]):
-                label_segment = label[np.where(label[:,self.IDX_CLUSTER_ID] == particle.id())]
-                if not particle.shape() == larcv.kShapeShower:
-                    masked_label.append(label_segment)
-                    continue
-                valid_idx = self.select_overlap(label_segment,shower_segment)
-                masked_label.append(label_segment[valid_idx])
-            self.output[tag] = np.concatenate(masked_label)
+        self._output['shower_mask'] = np.where(self._output['segment'][:,-1] == larcv.kShapeShower)
 
 
     def filter_ghosts(self, event):
@@ -394,436 +316,219 @@ class Pi0Chain:
         Removes ghost points from the charge tensor
         '''
         mask = None
-        if self.cfg['deghost'] == 'label':
+        if self._deghost == 'none':
+            # No deghosting needed, return
+            return
+        elif self._deghost == 'label':
+            # Remove points labeled as ghosts
             mask = np.where(event['segment_label'][:,-1] != 5)[0]
-
-        elif self.cfg['deghost'] == 'uresnet':
-            # Get the segmentation output of the network
-            res = self.output['forward']
-            # Argmax to determine most probable label
-            pred_ghost = np.argmax(res['ghost'][0], axis=1)
+        elif self._deghost == 'uresnet':
+            # Get the segmentation output of the network, argmax to determine most probable label
+            pred_ghost = np.argmax(self._output['forward']['ghost'], axis=1)
             mask = np.where(pred_ghost == 0)[0]
 
-        elif self.cfg['deghost']:
-            raise ValueError('De-ghosting method not recognized:', self.cfg['deghost'])
+        self._output['charge']  = self._output['charge' ][mask]
+        self._output['segment'] = self._output['segment'][mask]
+        if 'energy_label' in self._output:  self._output['energy_label']  = self._output['energy_label'][mask]
+        if 'segment_label' in self._output: self._output['segment_label'] = self._output['segment_label'][mask]
+        if 'cluster_label' in self._output: self._output['cluster_label'] = self._output['cluster_label'][mask]
 
-        else:
-            # no de-ghosting needed: return!
-            return
-
-        if 'charge'  in self.output: self.output['charge' ] = self.output['charge' ][mask]
-        if 'segment' in self.output: self.output['segment'] = self.output['segment'][mask]
-        if 'energy_label' in self.output: self.output['energy_label'] = self.output['energy_label'][mask]
-
-        for tag in ['cluster_label']:
-            if not tag in self.output: continue
-            segment = self.output['segment']
-            shower_segment = segment[self.output['shower_mask']]
-            masked_label = []
-            label = self.output[tag]
-            for idx, particle in enumerate(event['particles']):
-                label_segment = label[np.where(label[:,self.IDX_CLUSTER_ID] == particle.id())]
-                if not particle.shape() == larcv.kShapeShower:
-                    masked_label.append(label_segment)
-                    continue
-                valid_idx = self.select_overlap(label_segment,shower_segment)
-                masked_label.append(label_segment[valid_idx])
-            self.output[tag] = np.concatenate(masked_label)
-
-
-    def obtain_ppn_points(self, event):
-        '''
-        Obtain points predicted by PPN, for each semantic class
-        '''
-        from mlreco.utils.ppn import uresnet_ppn_type_point_selector
-
-        point_score_index  = -1 * (int(larcv.kShapeUnknown) + 1)
-        shower_score_index = -1 * (int(larcv.kShapeUnknown) - int(larcv.kShapeShower))
-        track_score_index  = -1 * (int(larcv.kShapeUnknown) - int(larcv.kShapeTrack))
-        michel_score_index = -1 * (int(larcv.kShapeUnknown) - int(larcv.kShapeMichel))
-        delta_score_index  = -1 * (int(larcv.kShapeUnknown) - int(larcv.kShapeDelta))
-        LEScat_score_index = -1 * (int(larcv.kShapeUnknown) - int(larcv.kShapeLEScatter))
-
-        points = uresnet_ppn_type_point_selector(event['input_data'],self.output['forward'])
-
-        default_scores = [0.5, 0.5, 0.5, 0.5, 0.5]
-
-        try:
-            thresholds = self.cfg['PPN_score_thresh']
-            if not (len(thresholds)==5):
-                print(' Need exactly 5 thresholds for PPN scores,', len(thresholds), 'given. Set them to', default_scores, ' ... ')
-                thresholds = default_scores
-        except:
-            print(' Thresholds for PPN scores not defined in chain cfg. Set them to', default_scores, ' ... ')
-            thresholds = default_scores
-
-        shower_points = points[np.where(points[:,shower_score_index] > float(thresholds[0]))]
-        track_points  = points[np.where(points[:,track_score_index]  > float(thresholds[1]))]
-        michel_points = points[np.where(points[:,michel_score_index] > float(thresholds[2]))]
-        delta_points  = points[np.where(points[:,delta_score_index]  > float(thresholds[3]))]
-        LEScat_points = points[np.where(points[:,LEScat_score_index] > float(thresholds[4]))]
-
-        shower_total_score = shower_points[:,shower_score_index] * shower_points[:,point_score_index]
-        track_total_score  = track_points[:,track_score_index]   * track_points[:,point_score_index]
-        michel_total_score = michel_points[:,michel_score_index] * michel_points[:,point_score_index]
-        delta_total_score  = delta_points[:,delta_score_index]   * delta_points[:,point_score_index]
-        LEScat_total_score = LEScat_points[:,LEScat_score_index] * LEScat_points[:,point_score_index]
-
-        shower_ordered = np.argsort(shower_total_score)
-        track_ordered  = np.argsort(track_total_score)
-        michel_ordered = np.argsort(michel_total_score)
-        delta_ordered  = np.argsort(delta_total_score)
-        LEScat_ordered = np.argsort(LEScat_total_score)
-
-        self.output['PPN_shower_points'] = [ShowerPoints(ppns=shower_points[i,:3],shower_score=i,shower_id=int(i)) for i in shower_ordered]
-        self.output['PPN_track_points']  = [TrackPoints(ppns=track_points[i,:3],track_score=i,track_id=int(i)) for i in track_ordered]
-        self.output['PPN_michel_points'] = [MichelPoints(ppns=michel_points[i,:3],michel_score=i,michel_id=int(i)) for i in michel_ordered]
-        self.output['PPN_delta_points']  = [DeltaPoints(ppns=delta_points[i,:3],delta_score=i,delta_id=int(i)) for i in delta_ordered]
-        self.output['PPN_LEScat_points'] = [LEScatPoints(ppns=LEScat_points[i,:3],LEScat_score=i,LEScat_id=int(i)) for i in LEScat_ordered]
+        self._output['shower_mask'] = np.where(self._output['segment'][:,-1] == larcv.kShapeShower)
 
 
     def charge_to_energy(self, event):
         '''
-        Reconstructs energy deposition from charge
+        Reconstructs energy deposition from charge.
         '''
-        if self.cfg['charge2energy'] is None:
-            self.output['energy'] = copy(self.output['charge'])
-
-        elif self.cfg['charge2energy'] == 'label':
-            self.output['energy'] = self.output['energy_label']
-
-        elif self.cfg['charge2energy'] == 'constant':
-            reco = self.cfg['charge2energy_cst']*self.output['charge'][:,-1]
-            self.output['energy'] = copy(self.output['charge'])
-            self.output['energy'][:,-1] = reco
-
-        elif self.cfg['charge2energy'] == 'average':
-            self.output['energy'] = copy(self.output['charge'])
-            self.output['energy'][:,-1] = self.cfg['charge2energy_average']
-
-        elif self.cfg['charge2energy'] == 'full':
-            raise NotImplementedError('Proper energy reconstruction not implemented yet')
-
-        elif self.cfg['charge2energy'] == 'enet':
-            raise NotImplementedError('ENet not implemented yet')
-
-        else:
-            raise ValueError('Energy reconstruction method not recognized:', self.cfg['charge2energy'])
+        if self._charge2e == 'none':
+            # The input to the reconstruction chain is energy, ignore this step
+            self._output['energy'] = copy(self._output['charge'])
+        elif self._charge2e == 'label':
+            # Use the energy_label as energy
+            self._output['energy'] = self._output['energy_label']
+        elif self._charge2e == 'constant':
+            # Use a constant factor to convert from charge to energy
+            assert 'cst' in self._charge2e_args, 'Constant factor for energy reconstruction not specified'
+            self._output['energy'] = copy(self._output['charge'])
+            self._output['energy'][:,-1] = self._charge2e_args['cst']*self._output['charge'][:,-1]
+        elif self._charge2e == 'average':
+            # Use an constant average energy value for all the voxels, ignore input charge
+            assert 'average' in self._charge2e_args, 'Average energy per shower voxel not specified'
+            self._output['energy'] = copy(self._output['charge'])
+            self._output['energy'][:,-1] = self._charge2e_args['average']
 
 
-    def reconstruct_cluster_starts(self, event):
+    def reconstruct_shower_fragments(self, event):
         '''
-        Identify starting points of showers. Points should be ordered by the definiteness of a shower
+        Cluster shower pixels into locally dense fragments
         '''
-        if self.cfg['shower_start'] == 'label':
-            # Find showers
-            particles = event['particles'][0]
-            points = event['ppn_label']
-            points = points[np.where(points[:,-2]==larcv.kShapeShower)]
-            order  = np.argsort([particles[int(points[i,-1])].energy_deposit() for i in range(len(points))])
-            if not self.cfg['shower_cluster'] == 'label':
-                self.output['showers'] = [Shower(start=points[i,:3],pid=points[i,-1]) for i in order]
+        if self._shower_fragment == 'label':
+            # Loop over true fragments, append one fragment per unique true label
+            self._output['shower_fragments'] = []
+            shower_label = self._output['cluster_label'][self._output['shower_mask']]
+            for pid in np.unique(shower_label[:,self.IDX_CLUSTER_ID]):
+                if pid > -1:
+                    mask = np.where(shower_label[:,self.IDX_CLUSTER_ID] == pid)[0]
+                    self._output['shower_fragments'].append(self._output['shower_mask'][mask])
+
+        elif self._shower_fragment == 'dbscan':
+            # Cluster shower energy depositions using dbscan
+            clusts, remaining_clusts, remaining_energy = self._frag_est.create_clusters(shower_points, shower_starts)
+            self._output['shower_fragments'] = [self._output['shower_mask'][c] for c in clusts]
+
+        elif self._shower_fragment == 'gnn':
+            # If the network already clustered the shower fragments, use as is
+            assert self._network and 'shower_fragments' in self._output['forward'], 'shower_fragments not available in network output'
+            self._output['shower_fragments'] = self._output['forward']['shower_fragments']
+
+        # If any shower voxel is not a shower fragment, store as leftover energy
+        full_mask = np.ones(len(self._output['segment']), dtype=np.bool)
+        full_mask[np.concatenate(self._output['shower_fragments'])] = False
+        full_mask = np.where(full_mask)[0]
+        self._output['leftover_energy'] = full_mask[np.where(self._output['segment'][full_mask] == larcv.kShapeShower)[0]]
+
+
+    def reconstruct_shower_primaries(self, event):
+        '''
+        Identify fragments that initiated a shower (primaries). For each of the identified
+        primary fragment, associate a unique shower object.
+        '''
+        if self._shower_primary == 'label':
+            # Simply identify the primary by checking if the particle corresponding to the fragment
+            # is one. Create a shower instance per primary fragment
+            clust_ids    = get_cluster_label(self._output['cluster_label'], self._output['shower_fragments'], self.IDX_CLUSTER_ID)
+            group_ids    = get_cluster_label(self._output['cluster_label'], self._output['shower_fragments'], self.IDX_GROUP_ID)
+            primary_mask = clust_ids == group_ids
+
+        elif self._shower_primary == 'gnn':
+            # For each predicted shower group, pick the most likely node as the primary
+            from scipy.special import softmax
+            node_scores = softmax(self._output['forward']['shower_node_pred'], axis=1)
+            group_ids = self._output['forward']['shower_group_pred']
+            primary_mask = np.zeros(len(group_ids), dtype=bool)
+            for g in np.unique(group_ids):
+                mask = np.where(group_ids == g)[0]
+                idx  = node_scores[mask][:,1].argmax()
+                primary_mask[mask[idx]] = True
+
+        # Create one shower object for each primary in the image, store leftover fragments
+        self._output['showers'], self._output['leftover_fragments'] = [], []
+        for i, f in enumerate(self._output['shower_fragments']):
+            if primary_mask[i]:
+                self._output['showers'].append(Shower(voxels=f, pid=group_ids[i]))
             else:
-                # create a list of group labels
-                primaries = {}
-                for i,p in enumerate(particles):
-                    if p.group_id() < 0: continue
-                    if not p.shape() == larcv.kShapeShower: continue
-                    if not p.group_id() in primaries: primaries[p.group_id()] = p
-                    elif p.position().t() < primaries[p.group_id()].position().t():
-                        primaries[p.group_id()] = p
-                    #print(i,p.id(),p.shape(),p.pdg_code(),p.creation_process())
-                showers = []
-                for gid,p in primaries.items():
-                    # find a point defined by ppn
-                    start = points[points[:,-1] == p.id()]
-                    assert len(start) < 2
-                    if len(start) == 0:
-                        print('Ignoring a true shower due to not finding PPN label point!')
-                        print('ID =',p.id())
-                        print(p.dump())
-                        continue
-                    showers.append(Shower(start=start[0,:3],pid=int(p.id())))
-                self.output['showers'] = showers
-
-        # Old method:
-        #elif self.cfg['shower_start'] == 'ppn':
-        #    from mlreco.utils.ppn import uresnet_ppn_type_point_selector
-        #    shower_score_index = -1 * (int(larcv.kShapeUnknown) - int(larcv.kShapeShower))
-        #    point_score_index  = -1 * (int(larcv.kShapeUnknown) + 1)
-        #    points = uresnet_ppn_type_point_selector([event['input_data']],self.output['forward'])
-        #    #points = points[np.where(points[:,shower_score_index] > self.cfg.get('ppn_shower_score_thresh',0.5))]
-        #    points = points[0][np.where(points[0][:,shower_score_index] > self.cfg.get('ppn_shower_score_thresh',0.5))]
-        #    total_score = points[:,shower_score_index] * points[:,point_score_index]
-        #    order  = np.argsort(total_score)
-        #    self.output['showers'] = [Shower(start=points[i,:3],pid=int(i)) for i in order]
-
-        # New method:
-        elif self.cfg['shower_start'] == 'ppn':
-            # Getting start points from PPN
-            start_points = []
-
-            # Use the node predictions to find primary nodes
-            if not 'shower_node_pred' in self.output['forward']:
-                self.output['showers'] = []
-                return
-            from scipy.special import softmax
-            node_scores = softmax(self.output['forward']['shower_node_pred'][0], axis=1)
-            primary_labels = np.zeros(len(node_scores), dtype=bool)
-            group_ids = self.output['forward']['shower_group_pred'][0]
-            for g in np.unique(group_ids):
-                mask = np.where(group_ids == g)[0]
-                idx  = node_scores[mask][:,1].argmax()
-                primary_labels[mask[idx]] = True
-            primaries = np.where(primary_labels)[0]
-            primary_clusts = self.output['forward']['shower_fragments'][0][primaries]
-            all_clusts = np.array([np.array(c) for c in self.output['forward']['shower_fragments'][0]])
-            group_ids = self.output['forward']['shower_group_pred'][0]
-
-            # Obtain group_id predicted by GNN for all primary_clusts
-            primary_clusts_group_pred = []
-            for i, primary_cluster in enumerate(primary_clusts):
-                for j, all_cluster in enumerate(all_clusts):
-                    if all_cluster[0]==primary_cluster[0]:
-                        primary_clusts_group_pred.append(group_ids[j])
-                        break
-
-            for clust_index, clust in enumerate(primary_clusts):
-                # Get the energy deposits of the cluster
-                clust_energy_pos = self.output['energy'][:,:3][clust] + 0.5 # +0.5 in order to get to voxel middle
-
-                # Get the scores of PPN
-                scores = softmax(self.output['forward']['points'][0][clust,3:5], axis=1)
-                argmax = (scores[:,-1]).argmax()
-                pos = self.output['energy'][clust][argmax,:3] + self.output['forward']['points'][0][clust][argmax,:3] + 0.5 # +0.5 (middle of voxel)
-                #print(' scores:         ', scores)
-                #print(' argmax:         ', argmax)
-                #print(' scores[argmax]: ', scores[argmax])
-                #print(' pos:            ', pos)
-                start_points.append(pos)
-            self.output['showers'] = [Shower(start=p,pid=int(i),group_pred=int(primary_clusts_group_pred[i])) for i, p in enumerate(start_points)]
-
-        elif self.cfg['shower_start'] == 'gnn':
-            # Use the node predictions to find primary nodes
-            if not 'shower_node_pred' in self.output['forward']:
-                self.output['showers'] = []
-                return
-            from scipy.special import softmax
-            node_scores = softmax(self.output['forward']['shower_node_pred'][0], axis=1)
-            primary_labels = np.zeros(len(node_scores), dtype=bool)
-            group_ids = self.output['forward']['shower_group_pred'][0]
-            for g in np.unique(group_ids):
-                mask = np.where(group_ids == g)[0]
-                idx  = node_scores[mask][:,1].argmax()
-                primary_labels[mask[idx]] = True
-            primaries = np.where(primary_labels)[0]
-            primary_clusts = self.output['forward']['shower_fragments'][0][primaries]
-            all_clusts = np.array([np.array(c) for c in self.output['forward']['shower_fragments'][0]])
-            group_ids = self.output['forward']['shower_group_pred'][0]
-
-            # Obtain group_id predicted by GNN for all primary_clusts
-            primary_clusts_group_pred = []
-            for i, primary_cluster in enumerate(primary_clusts):
-                for j, all_cluster in enumerate(all_clusts):
-                    if all_cluster[0]==primary_cluster[0]:
-                        primary_clusts_group_pred.append(group_ids[j])
-                        break
-
-            # Getting start points from GNN
-            start_finder = StartPointFinder()
-            start_points = start_finder.find_start_points(self.output['energy'][:,:3], primary_clusts)
-            self.output['showers'] = [Shower(start=p,pid=int(i),group_pred=int(primary_clusts_group_pred[i])) for i, p in enumerate(start_points)]
-
-        else:
-            raise ValueError('EM shower primary identifiation method not recognized:', self.cfg['shower_start'])
+                self._output['leftover_fragments'].append(f)
 
 
-    def reconstruct_shower_fragments(self,event):
+    def reconstruct_shower_starts(self, event):
         '''
-        Cluster shower pixels (fragmentation) per shower start point
+        Identify starting points of showers
         '''
-        self.output['shower_fragments']   = []
-        self.output['leftover_energy']    = []
-        self.output['leftover_fragments'] = []
-        if not len(self.output['shower_mask']):
-            return
-        # Assign clusters
-        points = self.output['energy']
-        shower_starts = np.array([s.start for s in self.output['showers']])
-        shower_points = self.output['energy'][self.output['shower_mask']]
+        if self._shower_start == 'label':
+            # For each primary fragment, use start point of the corresponding particle
+            primary_frags = [s.voxels for s in self._output['showers']]
+            clust_ids = get_cluster_label(self._output['cluster_label'], primary_frags, self.IDX_CLUSTER_ID)
+            for i, s in enumerate(self._output['showers']):
+                first_step = event['particles'][clust_ids[i]].first_step()
+                s.start    = [first_step.x(), first_step.y(), first_step.z()]
 
-        if self.cfg['shower_fragment'] == 'label':
-            if not self.cfg['shower_start'] == 'label':
-                raise ValueError('shower_fragment being "label" requires shower_start to be also "label"!')
+        elif self._shower_start == 'curv':
+            # Use point of max umbrella curvature as starting point
+            primary_frags = [s.voxels for s in self._output['showers']]
+            start_points  = start_finder.find_start_points(self._output['energy'][:,:3], primary_frags)
+            for i, s in enumerate(self._output['showers']):
+                s.start = start_points[i]
 
-            clusts = []
-            showers = []
-            for shower in self.output['showers']:
-                pid = shower.pid
-                # obtain the list of true cluster points
-                mask = np.where(self.output['cluster_label'][:,self.IDX_CLUSTER_ID] == pid)[0]
-                cluster = self.output['cluster_label'][mask]
-                # now select shower energy depositions that is in the list (can't just slice by "mask" as size is different)
-                cluster = self.select_overlap(shower_points,cluster)
-                if len(cluster) < 1:
-                    continue
-                clusts.append(cluster)
-                showers.append(shower)
-            self.output['showers'] = showers
-            self.output['shower_fragments'] = clusts
-
-            # compute remaining points
-            remain = shower_points
-            if len(clusts):
-                used = np.unique(np.concatenate(clusts)).astype(np.int32)
-                remain = [i for i in range(len(shower_points)) if not i in used]
-                remain = shower_points[remain]
-            if len(remain) < 1:
-                return
-            remain_labels = self.frag_est.make_shower_frags(remain)
-            remain_points = remain[np.where(remain_labels == -1)]
-            self.output['leftover_energy'] = self.select_overlap(shower_points,remain_points)
-            for idx in range(np.max(remain_labels)):
-                remain_cluster = remain[np.where(remain_labels == idx)]
-                self.output['leftover_fragments'].append(self.select_overlap(shower_points,remain_cluster))
-
-        elif self.cfg['shower_fragment'] == 'dbscan':
-            showers = []
-            if len(shower_points)<1:
-                self.output['showers'] = showers
-            else:
-                clusts, remaining_clusts, remaining_energy = self.frag_est.create_clusters(shower_points, shower_starts)
-                assert len(clusts) == len(self.output['showers'])
-                for idx, cluster in enumerate(clusts):
-                    if len(cluster) < 1: continue
-                    showers.append(self.output['showers'][idx])
-                    self.output['shower_fragments'].append(cluster)
-                self.output['showers'] = showers
-                self.output['leftover_fragments'] = remaining_clusts
-                self.output['leftover_energy']    = remaining_energy
-
-        elif self.cfg['shower_fragment'] == 'gnn':
-            mapping = {idx:i for (i, idx) in enumerate(self.output['shower_mask'][0])}
-            clusts = np.array([np.array([mapping[i] for i in c]) for c in self.output['forward']['shower_fragments'][0]])
+        elif self._shower_start == 'ppn':
+            # For each fragment, find the most likely point predicted *inside* the primary fragment
             from scipy.special import softmax
-            node_scores = softmax(self.output['forward']['shower_node_pred'][0], axis=1)
-            primary_labels = np.zeros(len(node_scores), dtype=bool)
-            group_ids = self.output['forward']['shower_group_pred'][0]
-            for g in np.unique(group_ids):
-                mask = np.where(group_ids == g)[0]
-                idx  = node_scores[mask][:,1].argmax()
-                primary_labels[mask[idx]] = True
-            primaries = np.where(primary_labels)[0]
-            others = [i for i in range(len(clusts)) if i not in primaries]
-            labels = -np.ones(len(shower_points))
-            for i, c in enumerate(clusts):
-                labels[c] = i
-            self.output['shower_fragments'] = clusts[primaries]
-            self.output['leftover_fragments'] = clusts[others]
-            self.output['remaining_energy'] = np.where(labels == -1)[0]
-
-        else:
-            raise ValueError('Shower fragment reconstruction method not recognized:', self.cfg['shower_fragment'])
+            voxels = self._output['energy'][:,:3]
+            points_tensor = self._output['forward']['points']
+            for i, s in enumerate(self._output['showers']):
+                f       = s.voxels
+                dmask   = np.where(np.max(np.abs(points_tensor[f,:3]), axis=1) < 1.)[0]
+                scores  = softmax(points_tensor[f,3:5], axis=1)
+                argmax  = dmask[np.argmax(scores[dmask,-1])] if len(dmask) else np.argmax(scores[:,-1])
+                start   = voxels[f][argmax,:3] + points_tensor[f][argmax,:3] + 0.5
+                s.start = start
 
 
     def reconstruct_shower_directions(self, event):
         '''
         Reconstructs the direction of the showers
         '''
-        if self.cfg['shower_direction'] == 'label':
-            for shower in self.output['showers']:
-                part = event['particles'][0][int(shower.pid)]
-                mom = [part.px(), part.py(), part.pz()]
-                shower.direction = list(np.array(mom)/np.linalg.norm(mom))
+        if self._shower_direction == 'label':
+            # For each primary fragment, use the starting direction of the corresponding particle
+            primary_frags = [s.voxels for s in self._output['showers']]
+            clust_ids     = get_cluster_label(self._output['cluster_label'], primary_frags, self.IDX_CLUSTER_ID)
+            for i, s in enumerate(self._output['showers']):
+                particle    = event['particles'][clust_ids[i]]
+                mom         = [particle.px(), particle.py(), particle.pz()]
+                s.direction = list(np.array(mom)/np.linalg.norm(mom))
 
-        elif self.cfg['shower_direction'] == 'pca' or self.cfg['shower_direction'] == 'cent':
-            # Apply DBSCAN, PCA on the touching cluster to get angles
-            algo = self.cfg['shower_direction']
-            shower_points = self.output['energy'][self.output['shower_mask']]
-            starts = np.array([s.start for s in self.output['showers']])
-            fragments = [shower_points[inds] for inds in self.output['shower_fragments']]
-
-            # Old method
-            #try:
-            #    res = self.dir_est.get_directions(starts, fragments, max_distance=float(10), mode=algo) #max_distance=float('inf')
-            #except AssertionError as err: # Cluster was not found for at least one primary
-            #    if self.verbose:
-            #        print('Error in direction reconstruction:', err)
-            #    res = [[0., 0., 0.] for _ in range(len(self.output['showers']))]
-            #for i, shower in enumerate(self.output['showers']):
-            #    shower.direction = res[i]
-
-            # New method
-            for i, shower in enumerate(self.output['showers']):
-                direction = cluster_direction(torch.tensor(fragments[i]), torch.tensor(starts[i]), max_dist=-1, optimize=True)
-                shower.direction = np.array(direction)
-
-        else:
-            raise ValueError('Shower direction reconstruction method not recognized:', self.cfg['shower_direction'])
+        elif self._shower_direction == 'geo':
+            # Use a geometric method to estimate the direction of the primary shower fragment (PCA or centroid)
+            starts     = np.array([s.start for s in self._output['showers']])
+            fragments  = [self._output['energy'][s.voxels] for s in self._output['showers']]
+            directions = self._dir_est.get_directions(starts, fragments)
+            for i, shower in enumerate(self._output['showers']):
+               shower.direction = directions[i]
 
 
     def reconstruct_shower_cluster(self,event):
         '''
         Cluster shower fragments and left-over pixels
         '''
-        if len(self.output['shower_fragments']) < 1:
-            return
-        if self.cfg['shower_cluster'] == 'label':
-            # Require the shower definition (= list of start points) match with true cluster definition
-            if not self.cfg['shower_start'] == 'label':
-                raise ValueError('shower_cluster value "label" must be combined with shower_start "label"!')
-            # Obtain a true cluster
-            segment = self.output['segment']
-            shower_points = self.output['energy'][self.output['shower_mask']]
+        if self._shower_cluster == 'label':
+            # Use group labels of shower fragments and leftover voxels to put them together
+            primary_group_ids  = [s.pid for s in self._output['showers']]
+            frag_group_ids     = get_cluster_label(self._output['cluster_label'], self._output['shower_fragments'], self.IDX_GROUP_ID)
+            frag_mask          = np.ones(len(frag_group_ids), dtype=np.bool)
+            for i, s in enumerate(self._output['showers']):
+                group_mask = frag_group_ids == primary_group_ids[i]
+                s.voxels   = np.concatenate(self._output['shower_fragments'][group_mask])
+                frag_mask[group_mask] = False
 
-            particles = event['particles'][0]
-            for shower in self.output['showers']:
-                gid = particles[shower.pid].group_id()
-                mask = np.where(self.output['cluster_label'][:,self.IDX_GROUP_ID] == gid)[0]
-                points = self.output['cluster_label'][mask]
-                valid_idx = self.select_overlap(shower_points,points)
-                shower.voxels = valid_idx
+            lo_mask = np.ones(len(self._output['leftover_energy']), dtype=np.bool)
+            for i, s in enumerate(self._output_showers):
+                group_mask = self._output['cluster_label'][self._output['leftover_energy'],self.IDX_GROUP_ID] == primary_group_ids[i]
+                s.voxels = np.concatenate([s.voxels, self._output['leftover_energy'][group_mask]])
+                lo_mask[group_mask] = False
 
-        elif self.cfg['shower_cluster'] == 'cone':
+            self._output['leftover_fragments'] = self._output['fragments'][frag_mask]
+            self._output['leftover_energy'] = self._output['leftover_energy'][lo_mask]
+
+        elif self._shower_cluster == 'cone':
+            # Build one cone per starting point, merge fragments and leftovers
             self.merge_fragments(event)
             self.merge_leftovers(event)
 
-        elif self.cfg['shower_cluster'] == 'gnn':
-            mapping = {idx:i for (i, idx) in enumerate(self.output['shower_mask'][0])}
-            clusts = np.array([np.array([mapping[i] for i in c]) for c in self.output['forward']['shower_fragments'][0]])
-            group_ids = self.output['forward']['shower_group_pred'][0]
-            frags, left_frags = [], []
-            indices = []
-            used_group_ids = []
-            for i, sh in enumerate(self.output['showers']):
-                for gr_id in group_ids:
-                    if (gr_id == sh.group_pred) and (gr_id not in used_group_ids):
-                        used_group_ids.append(gr_id)
-                        indices.append(np.where(group_ids == sh.group_pred)[0])
-            for frag, ind in enumerate(indices):
-                frags.append(np.concatenate([clusts[j] for j in ind]))
-            for i, s in enumerate(self.output['showers']):
-                s.voxels = frags[i]
-                #s.energy = np.sum(self.output['energy'][self.output['shower_mask']][frags[i]][:,-1])
-            self.output['shower_fragments'] = frags
-            self.output['leftover_fragments'] = left_frags
+        elif self._shower_cluster == 'gnn':
+            # Use the GNN group predictions to cluster leftover fragments
+            primary_group_ids = [s.pid for s in self._output['showers']]
+            frag_group_ids    = self._output['forward']['shower_group_pred']
+            frag_mask         = np.ones(len(frag_group_ids), dtype=np.bool)
+            for i, s in enumerate(self._output['showers']):
+                group_mask = frag_group_ids == primary_group_ids[i]
+                s.voxels   = np.concatenate(self._output['shower_fragments'][group_mask])
+                frag_mask[group_mask] = False
 
-        else:
-            raise ValueError('Merge shower fragments method not recognized:', self.cfg['shower_cluster'])
+            self._output['leftover_fragments'] = self._output['shower_fragments'][frag_mask]
 
+            # TODO: Add option to merge leftover energy using cones ? Ignore for now
 
     def merge_fragments(self, event):
         '''
         Merge shower fragments with assigned start point
         '''
         from pi0.cluster.fragment_merger import group_fragments
-        impact_parameter = float(self.cfg['shower_cluster_params']['IP'])
-        radiation_length = float(self.cfg['shower_cluster_params']['Distance'])
-        shower_points = self.output['energy'][self.output['shower_mask']]
+        impact_parameter = float(self.cfg['shower_cluster_args']['IP'])
+        radiation_length = float(self.cfg['shower_cluster_args']['Distance'])
+        shower_points = self._output['energy'][self._output['shower_mask']]
         fragments = []
-        for i, s in enumerate(self.output['showers']):
+        for i, s in enumerate(self._output['showers']):
             start = s.start
-            voxel = shower_points[self.output['shower_fragments'][i]]
+            voxel = shower_points[self._output['shower_fragments'][i]]
             fragments.append([start,voxel])
 
         roots, groups, pairs = group_fragments(fragments, dist_prep=impact_parameter, dist_rad=radiation_length)
@@ -833,11 +538,11 @@ class Pi0Chain:
         fragments = []
         for idx,root in enumerate(roots):
             # merge secondaries
-            showers.append(self.output['showers'][root])
-            secondaries = [self.output['shower_fragments'][fidx] for fidx in groups[idx]]
+            showers.append(self._output['showers'][root])
+            secondaries = [self._output['shower_fragments'][fidx] for fidx in groups[idx]]
             fragments.append(np.concatenate(secondaries))
-        self.output['showers'] = showers
-        self.output['shower_fragments'] = fragments
+        self._output['showers'] = showers
+        self._output['shower_fragments'] = fragments
 
 
     def merge_leftovers(self, event):
@@ -845,636 +550,183 @@ class Pi0Chain:
         Merge leftover fragments (w/o start point) and leftover pixels
         '''
         # Fits cones to each shower, adds energies within that cone
-        starts = np.array([s.start for s in self.output['showers']])
-        dirs = np.array([s.direction for s in self.output['showers']])
-        shower_energy = self.output['energy'][self.output['shower_mask']]
-        #print(self.output['leftover_fragments'][0].type)
-        remaining_inds = np.concatenate(self.output['leftover_fragments'] + [self.output['leftover_energy']]).astype(np.int32)
+        starts = np.array([s.start for s in self._output['showers']])
+        dirs = np.array([s.direction for s in self._output['showers']])
+        shower_energy = self._output['energy'][self._output['shower_mask']]
+        #print(self._output['leftover_fragments'][0].type)
+        remaining_inds = np.concatenate(self._output['leftover_fragments'] + [self._output['leftover_energy']]).astype(np.int32)
         if len(remaining_inds) < 1:
-            for i, shower in enumerate(self.output['showers']):
-                shower.voxels = self.output['shower_fragments'][i]
+            for i, shower in enumerate(self._output['showers']):
+                shower.voxels = self._output['shower_fragments'][i]
             return
 
         remaining_energy = shower_energy[remaining_inds]
-        fragments = [shower_energy[ind] for ind in self.output['shower_fragments']]
-        pred = self.clusterer.fit_predict(remaining_energy, starts, fragments, dirs)
+        fragments = [shower_energy[ind] for ind in self._output['shower_fragments']]
+        pred = self._clusterer.fit_predict(remaining_energy, starts, fragments, dirs)
 
-        for i, shower in enumerate(self.output['showers']):
+        for i, shower in enumerate(self._output['showers']):
             merging_inds = remaining_inds[np.where(pred == i)]
-            shower.voxels = np.concatenate([self.output['shower_fragments'][i],merging_inds])
+            shower.voxels = np.concatenate([self._output['shower_fragments'][i],merging_inds])
 
 
     def reconstruct_shower_energy(self, event):
-
-        if self.cfg['shower_energy'] == 'label':
-            if not self.cfg['shower_start'] == 'label':
-                raise ValueError('shower_energy value "label" must be combined with shower_start "label"!')
-            particles = event['particles'][0]
-            for s in self.output['showers']:
-                s.energy = particles[s.pid].energy_init()
-
-        elif self.cfg['shower_energy'] == 'pixel_sum':
-            for s in self.output['showers']:
-                s.energy = np.sum(self.output['energy'][self.output['shower_mask']][s.voxels][:,-1])
-
-        else:
-            raise ValueError('shower_energy method not recognized:', self.cfg['shower_energy'])
-
-
-    def reconstruct_shower_starts(self, event):
         '''
-        Identify starting points of showers.
-        Observation: Shower start point often is not correctly reconstructed.
-        This happens in particular when DBSCAN cannot distinguish single fragments but the PPN can.
-        The shower start is reconstructed in the following way (if self.cfg['shower_start'] == 'ppn'):
-            - From the PPN network, take all track-like and shower-like points (with score > threshold defined in config string)
-            - From this set of points define a set of start_point_candidates (the candidates need to have >10 own edeps closer than 10 px)
-            - If > 1 candidate points are present: Select the one which is at the 'edge' of the edep cloud
-              Procedure:
-              Integrate all charge along the PC in positive and negative direction (from the start_point_candidate).
-              Take as shower start the candidate for which the ratio of the two numbers (smaller/larger) is the smallest.
+        Reconstruct the energy of the showers
         '''
-        if self.cfg['shower_start'] == 'ppn':
-
-            # Get track-labeled and shower-labeled points from PPN
-            if self.output['PPN_track_points']:
-                track_points = np.array([i.ppns for i in self.output['PPN_track_points']])
-                #print(' track_points: ', track_points)
-            if self.output['PPN_shower_points']:
-                shower_points = np.array([i.ppns for i in self.output['PPN_shower_points']])
-                #print(' shower_points: ', shower_points)
-
-            # Loop over all showers and select those PPN points which have >10 edeps within a radius of 10 pixels:
-            for sh_index, sh in enumerate(self.output['showers']):
-                # Get the energy deposits of the shower
-                edep_pos = self.output['energy'][self.output['shower_mask']][sh.voxels][:,0:3] + 0.5
-
-                # Get start point candidates
-                start_point_candidates = []
-                if len(self.output['PPN_track_points'])>0:
-                    for index, point in enumerate(track_points):
-                        edep_counter = 0
-                        for edep_index, edep in enumerate(edep_pos):
-                            if np.linalg.norm(np.array(point)-np.array(edep)) < 10.:
-                                edep_counter += 1
-                        if edep_counter > 10:
-                            start_point_candidates.append(point)
-                if len(self.output['PPN_shower_points'])>0:
-                    for index, point in enumerate(shower_points):
-                        edep_counter = 0
-                        for edep_index, edep in enumerate(edep_pos):
-                            if np.linalg.norm(np.array(point)-np.array(edep)) < 10.:
-                                edep_counter += 1
-                        if edep_counter > 10:
-                            start_point_candidates.append(point)
-
-                # If > 1 candidate is present: Select one candidate as start point
-                if len(start_point_candidates) > 1:
-                    edep_counter_min = float('inf') #
-                    candidate_index = 0
-
-                    # Principal components analysis of the shower edeps
-                    from scipy import linalg as LA
-                    # Get barycentre of the cluster and obtain the covariance matrix
-                    barycentre = edep_pos.mean(axis=0)
-                    edep_pos_barycentre = edep_pos - barycentre # edep positions w.r.t. the barycentre
-                    cov_mat = np.cov(edep_pos_barycentre, rowvar=False)
-                    # Obtain (sorted) eigenvalues and eigenvectors (use 'eigh' rather than 'eig' since cov_mat is symmetric, gain in performance)
-                    evals, evecs = LA.eigh(cov_mat)
-                    idx = np.argsort(evals)[::-1]
-                    evals = evals[idx] # sorted eigenvalues
-                    evecs = evecs[:,idx] # sorted eigenvectors
-                    PC_0 = np.array([evecs[0][0],evecs[1][0],evecs[2][0]]) # First principal component
-                    PC_1 = np.array([evecs[0][1],evecs[1][1],evecs[2][1]]) # Second principal component
-                    PC_2 = np.array([evecs[0][2],evecs[1][2],evecs[2][2]]) # Third principal component
-
-                    # Loop over all start point candidates and sum up all hits along the principal component ('left' and 'right' of the start_point_candidate)
-                    min_fraction = float('inf')
-                    selected_start = sh.start
-                    for cand_ind, cand_pos in enumerate(start_point_candidates):
-                        sum_left = 0
-                        sum_right = 0
-                        # Loop over all edeps and see whether edep is on the 'left' or on the 'right' side (along the PC_0) of the candidate_
-                        for edep_ind, edep_position in enumerate(edep_pos):
-                            _edep_position = edep_position - cand_pos # edep position, seen from candidate_position
-                            if np.dot(_edep_position, PC_0)/(np.linalg.norm(_edep_position)*np.linalg.norm(PC_0))>0:
-                                sum_left += 1
-                            if np.dot(_edep_position, PC_0)/(np.linalg.norm(_edep_position)*np.linalg.norm(PC_0))<0:
-                                sum_right +=1
-                        # Take the fraction smaller_sum / larger_sum.
-                        if sum_left < sum_right and sum_right != 0:
-                            fraction = sum_left / sum_right
-                        elif sum_left >= sum_right and sum_left != 0:
-                            fraction = sum_right / sum_left
-                        else:
-                            print(' WARNING: Either sum_right or sum_left == 0 ... ')
-                        if fraction < min_fraction:
-                            min_fraction = fraction
-                            selected_start = cand_pos
-                    sh.start = selected_start
-
-            # Note: The start positions of some showers might have changed -> Execute functions relevant to this change again:
-            self.reconstruct_shower_fragments(event)
-            self.reconstruct_shower_directions(event)
-
-        else:
-            return
+        if self._shower_energy == 'label':
+            # Get the true total shower energy from the particle tree
+            for s in self._output['showers']:
+                s.energy = event['particles'][s.pid].energy_init()
+        elif self._shower_energy == 'pixel_sum':
+            # Sum the energy of all the voxels in the shower
+            for s in self._output['showers']:
+                s.energy = np.sum(self._output['energy'][s.voxels][:,-1])
+                if 'fudge' in self._shower_energy_args:
+                    s.energy *= self._shower_energy_args['fudge']
 
 
-    def obtain_likelihood(self, event):
+    def reconstruct_shower_id(self, event):
         '''
-        Obtain the electron/positron- and photon likelihood fractions for the showers by looking at the dE/dx value at the very start of each EM shower.
+        Obtain the electron/positron and photon likelihood fractions for the showers.
         '''
-        #energy      = self.output['energy']
-        #shower_mask   = self.output['shower_mask']
-        shower_energy = self.output['energy'][self.output['shower_mask']]
-        reco_showers = self.output['showers']
+        if self._shower_id == 'none':
+            # Set all photon likelihood to one, all the showers will be candidates to be matched
+            for i, s in enumerate(self._output['showers']):
+                s.L_e = 0.
+                s.L_p = 1.
 
-        PID = ElectronPhoton_Separation()
-        PID.likelihood_fractions(reco_showers, shower_energy)
+        if self._shower_id == 'label':
+            # Use the true particle ID to determine whether the ancestor is a photon or an electron
+            primary_frags = [s.voxels for s in self._output['showers']]
+            clust_ids     = self.get_cluster_label(self._output['cluster_label'], primary_frags, self.IDX_CLUSTER_ID)
+            for i, s in enumerate(self._output['showers']):
+                particle = event['particles'][clust_ids[i]]
+                s.L_e = int(abs(particle.ancestor_pdg_code()) == 11)
+                s.L_p = int(particle.ancestor_pdg_code() == 22 or particle.ancestor_pdg_code() == 111)
 
-        return
+        elif self._shower_id == 'edep':
+            # Use the energy deposition at the start of a shower a criterion for e/gamma separation
+            # TODO: This method is inherently flawed. If a gamma compton scatters, the primary is very much an electron (way around that ?)
+            self._identifier.likelihood_fractions(self._output['showers'], self._output['energy'])
+
+        elif self._shower_id == 'gnn':
+            # Use the GNN to preidict its node types (electron or photon shower)
+            raise NotImplementedError('Need to implement PID in the interaction GNN')
+
+
+    def apply_fiducial_cut(self, event): # TODO: Is this function needed any longer?
+        '''
+        If a shower has edeps Out Of Fiducial Volume (OOFV), put the shower number to self._output['OOFV']
+        '''
+        if self._fiducial == 'none':
+            # If no fiducial cut is required, skip this step
+            pass
+        elif self._fiducial == 'edge_dist':
+            # Loop over showers, if any of the energy deposits are outside of fiducial, record shower id
+            assert 'max_distance' in self._fiducial_args, 'Need to specify minimum distance from volume edge'
+            max_dist = self._fiducial_args['max_distance']
+            self._output['OOFV'] = []
+            for i, s in enumerate(self._output['showers']):
+                coords = self._output['energy'][s.voxels,:3]
+                if np.any(coords < max_dist) or np.any(coords > (767-max_dist)): # TODO: Size hard corded
+                    self._output['OOFV'].append(i)
 
 
     def identify_pi0(self, event):
         '''
-        Proposes pi0 candidates (match two showers)
+        Proposes pi0 candidates (match pairs of showers)
         '''
-        self.output['matches']  = []
-        self.output['vertices'] = []
-        n_showers = len(self.output['showers'])
-        if self.cfg['shower_match'] == 'label':
-            # Make the pairs based on parent track id
-            shower_lists = {}
-            for idx, shower in enumerate(self.output['showers']):
-                part = event['particles'][0][shower.pid]
-                if not part.parent_pdg_code() == 111:
-                    continue
-                if not part.parent_track_id() in shower_lists:
-                    shower_lists[part.parent_track_id()] = [part.position(),idx]
-                else:
-                    shower_lists[part.parent_track_id()].append(idx)
+        self._output['matches']  = []
+        self._output['vertices'] = []
+        n_showers = len(self._output['showers'])
 
-            for parent, pids in shower_lists.items():
-                if len(pids) <= 2:
-                    continue
-                elif len(pids) == 3:
-                    pair = pids[1:]
-                    pos  = [pids[0].x(),pids[0].y(),pids[0].z()]
-                    self.output['matches'].append(pids[1:])
-                    self.output['vertices'].append(pos)
-                if len(pids) > 3:
-                    print('WARNING: in identify_pi0, ignoring >2 particle pairs from the shared parent...')
-                    for p in pids[1:]:
-                        print('ID =',p)
-                        print(event['particles'][0][p].dump())
+        if self._shower_match == 'label':
+            # Make the pairs based on ancestor track id, only consider 111 ancestors
+            primary_frags = [s.voxels for s in self._output['showers']]
+            clust_ids     = self.get_cluster_label(self._output['cluster_label'], primary_frags, self.IDX_CLUSTER_ID)
+            anc_ids, pdgs = [], []
+            for pid in clust_ids:
+                particle = event['particles'][pid]
+                anc_ids.append(int(particle.ancestor_track_id()))
+                pdgs.append(particle.ancestor_pdg_code())
 
-            """
-            # Get the creation point of each particle. If two gammas originate from the same point,
-            # It is most likely a pi0 decay.
-            creations = []
-            for shower in self.output['showers']:
-                part = event['particles'][0][shower.pid]
-                creations.append([part.position().x(), part.position().y(), part.position().z()])
-            for i, ci in enumerate(creations):
-                for j in range(i+1,n_showers):
-                    if (np.array(ci) == np.array(creations[j])).all():
-                        self.output['matches'].append([i,j])
-                        self.output['vertices'].append(ci)
-            """
+            anc_ids, pdgs  = np.array(anc_ids), np.array(pdgs)
+            pi0_mask = np.where(pdgs == 111)[0]
+            for aid in np.unique(anc_ids[pi0_mask]):
+                group_mask = np.where(anc_ids == aid)[0]
+                if len(group_mask) < 2: continue
+                if len(group_mask) > 2:
+                    sizes = [len(primary_frags[i]) for i in group_mask]
+                    order = np.argsort(sizes)
+                    group_mask = group_mask[order][-2:]
 
-            return self.output['matches']
+                pos = event['particles'][group_mask[0]].ancestor_position()
+                self._output['matches'].append(group_mask)
+                self._output['vertices'].append(np.array([pos.x(), pos.y(), pos.z()]))
 
-        elif self.cfg['shower_match'] == 'proximity':
+        elif self._shower_match == 'proximity':
+            # Pair showers which directions backtrack closest to each other
+            sh_starts   = np.array([s.start for s in self._output['showers']])
+            sh_dirs     = np.array([s.direction for s in self._output['showers']])
+            sh_energies = np.array([s.energy for s in self._output['showers']])
+            self._output['matches'], self._output['vertices'], dists = self._matcher.find_matches(self._output['showers'], self._output['segment'], self._shower_match)
+
+        elif self._shower_match == 'ppn':
+            # Pair showers which are most compatible with a PPN track point (vertex)
+            from mlreco.utils.ppn import uresnet_ppn_type_point_selector
+            points = uresnet_ppn_type_point_selector(event['input_data'],\
+                {key: [self._output['forward'][key]] for key in ['segmentation', 'points', 'mask_ppn2']})
+            point_semg = points[:,-1]
+            ppn_track_points = points[point_labels == k.ShapeTrack, :3]
+            self._output['ppn_track_points'] = ppn_track_points
+
             # Pair closest shower vectors
-            sh_starts   = np.array([s.start for s in self.output['showers']])
-            sh_dirs     = np.array([s.direction for s in self.output['showers']])
-            sh_energies = np.array([s.energy for s in self.output['showers']])
-            try:
-                self.output['matches'], self.output['vertices'], dists = self.matcher.find_matches(self.output['showers'], self.output['segment'], self.cfg['shower_match'])
-            except ValueError as err:
-                if self.verbose:
-                    print('Error in PID:', err)
-                return
+            sh_starts   = np.array([s.start for s in self._output['showers']])
+            sh_dirs     = np.array([s.direction for s in self._output['showers']])
+            sh_energies = np.array([s.energy for s in self._output['showers']])
+            self._output['matches'], self._output['vertices'] = self._matcher.find_matches(self._output['showers'],\
+                                                                                        self._output['segment'],\
+                                                                                        self._shower_match,\
+                                                                                        ppn_track_points)
 
-        elif self.cfg['shower_match'] == 'ppn':
-            # Pair closest shower vectors
-            sh_starts   = np.array([s.start for s in self.output['showers']])
-            sh_dirs     = np.array([s.direction for s in self.output['showers']])
-            sh_energies = np.array([s.energy for s in self.output['showers']])
-            '''
-            print(' sh_starts: ')
-            for sh_index, start in enumerate(sh_starts):
-                print('     ', start)
-            print(' sh_directions: ')
-            for sh_index, direction in enumerate(sh_dirs):
-                print('     ', direction)
-            print(' sh_energies: ')
-            for sh_index, energy in enumerate(sh_energies):
-                print('     ', energy)
-            '''
-            self.output['matches'], self.output['vertices'] = self.matcher.find_matches(self.output['showers'],\
-                                                                                        self.output['segment'],\
-                                                                                        self.cfg['shower_match'],\
-                                                                                        self.output['PPN_track_points'])
+        elif self._shower_match == 'gnn':
+            raise NotImplementedError('Will be able to use interaction clustering to infer Pi0 pairings')
 
-        else:
-            raise ValueError('Shower matching method not recognized:', self.cfg['shower_match'])
-
-        if self.cfg['refit_dir'] and (self.cfg['shower_match'] == 'proximity' or self.cfg['shower_match'] == 'ppn'):
-            for i, match in enumerate(self.output['matches']):
+        # If requested, use the newly reconstructed Pi0 vertex to adjust the shower directions
+        if self._shower_match != 'label' and self._shower_match_args['refit_dir']:
+            for i, match in enumerate(self._output['matches']):
                 idx1, idx2 = match
-                v = np.array(self.output['vertices'][i])
-                for shower_idx in [idx1,idx2]:
-                    #new_dir = np.array(points[shower_idx]) - v
-                    #new_dir = np.array(points[shower_idx][:3]) - v
-                    new_dir = self.output['showers'][shower_idx].start - v
-                    if np.all(new_dir==0):
-                        if self.verbose:
-                            print('INFO : ShowerStart == VertexPos -> Do not refit the direction of the shower ... (event:', self.event['index'], ')')
+                v = np.array(self._output['vertices'][i])
+                for shower_idx in match:
+                    new_dir = self._output['showers'][shower_idx].start - v
+                    if not np.linalg.norm(new_dir):
+                        self._print(f'Direction of shower {shower_idx} was not refitted because its start point coincides the pi0 vertex')
                         continue
-
                     # Only take new direction if shower start position is not too close to the vertex
-                    # TODO: Optimise this parameter
+                    # TODO: Optimize this parameter
                     if np.linalg.norm(new_dir) < 5.:
                         continue
-                    self.output['showers'][shower_idx].direction = new_dir/np.linalg.norm(new_dir)
+                    self._output['showers'][shower_idx].direction = new_dir/np.linalg.norm(new_dir)
 
-            # Below commented out as the clustering stage relies on ordering of merging fragments and
-            #       grouping of fragments. Simply re-calling that function at this point with an updated
-            #       angle calculation may not be a good idea (i.e. could merge 2 big showers by repeating
-            #       merge fragments inside the reconstruct_shower_cluster function).
-            #if self.cfg['shower_energy'] == 'cone' and self.cfg['refit_cone']:
-            #    self.reconstruct_shower_energy(event)
-
-
-    def fiducialize(self, event): # TODO: Is this function needed any longer?
-        '''
-        If a shower has edeps Out Of Fiducial Volume (OOFV), put the shower number to self.output['OOFV']
-        '''
-        self.output['OOFV'] = []
-
-        if self.cfg['fiducialize'] > 0:
-            #print(' Fiducialization: ', self.cfg['fiducialize'], ' pixels from boundary.')
-            pass
-        elif self.cfg['fiducialize'] == 0:
-            #print(' No fiducialization to be done.')
-            return self.output['OOFV']
-        else:
-            raise ValueError('fiducialize method (in chain.py) not recognized. Require integer >= 0. You entered:', self.cfg['fiducialize'])
-
-        energy      = self.output['energy']
-        shower_mask = self.output['shower_mask']
-
-        # Obtain shower's info: x,y,z,batch_id,e_deposited
-        shower_counter = 0
-        for s in self.output['showers']: # s is shower object
-            s.x        = energy[shower_mask][s.voxels][:,0]
-            s.y        = energy[shower_mask][s.voxels][:,1]
-            s.z        = energy[shower_mask][s.voxels][:,2]
-            s.batch_id = energy[shower_mask][s.voxels][:,3]
-            s.edep     = energy[shower_mask][s.voxels][:,4]
-            coords     = np.array((s.x,s.y,s.z))
-
-            # If at least one edep is OOFV: Put shower number to list self.output['OOFV']
-            if ( np.any(coords<self.cfg['fiducialize']) or np.any(coords>(767-self.cfg['fiducialize'])) ):
-                self.output['OOFV'].append(shower_counter)
-
-            shower_counter += 1
-        return self.output['OOFV']
+        if self._shower_energy == 'cone' and self._shower_match_args['refit_cone']:
+            self.reconstruct_shower_energy(event)
 
 
     def pi0_mass(self):
         '''
         Reconstructs the pi0 mass
         '''
-        from math import sqrt
-        masses = []
-
-        for match in self.output['matches']:
+        self._output['masses'] = []
+        for match in self._output['matches']:
             idx1, idx2 = match
-
-            # Do not use the pi0 decay if at least one of the showers has edeps OOFV:
-            #if (idx1 in self.output['OOFV'] or idx2 in self.output['OOFV']):
-            #    if self.verbose:
-            #        print('Shower edeps close to LAr volume edge -> skip this pi0 in event ', self.event['index'])
-            #    continue
-            s1, s2 = self.output['showers'][idx1], self.output['showers'][idx2]
+            s1, s2 = self._output['showers'][idx1], self._output['showers'][idx2]
             e1, e2 = s1.energy, s2.energy
             t1, t2 = s1.direction, s2.direction
             costheta = np.dot(t1, t2)
-            if abs(costheta) > 1.:
-                print(' WARNING: costheta = np.dot(sh1.dir, sh2.dir) > 1. sh1.dir = ', t1, ', sh2.dir = ', t2, 'costheta = ', costheta)
-                masses.append(-9)
-                continue
-            #if e1 < 35. or e2 < 35.:
-            #    masses.append(-3)
-            #    continue
-            masses.append(sqrt(2.*e1*e2*(1.-costheta)))
-        self.output['masses'] = masses
-        return masses
+            self._output['masses'].append(np.sqrt(2.*e1*e2*(1.-costheta)))
 
-
-    def draw(self,**kargs):
-        import plotly
-        import numpy
-        from mlreco.visualization.points import scatter_points
-        import plotly.graph_objs as go
-        from plotly.offline import iplot
-
-        graph_data = []
-
-        # Draw voxels with cluster labels
-        # ------------------------------------
-        energy = self.output['energy']
-        shower_mask = self.output['shower_mask']
-        graph_data += scatter_points(energy,markersize=2,color=energy[:,-1],colorscale='Inferno')
-        graph_data[-1].name = 'Energy'
-
-
-        # Add points from true electronShowers
-        # ------------------------------------
-        '''
-        colors = plotly.colors.qualitative.Light24
-        for i, s in enumerate(self.output['electronShowers']):
-            if len(s.voxels)<1:
-                continue
-            color = colors[i % (len(colors))]
-            graph_data += scatter_points(np.asarray(s.voxels),markersize=2,color=color)
-            graph_data[-1].name = 'True electron shower %d (edep: %.2f)' %(i,s.edep_tot)
-
-        if len(self.output['electronShowers'])>0:
-            #points = np.array([s.start[0:3] for s in self.output['electronShowers']])
-            #graph_data += scatter_points(points, markersize=3, color='deepskyblue')
-            #graph_data[-1].name = 'True electron shower starts'
-
-            points = np.array([s.first_step[0:3] for s in self.output['electronShowers']])
-            graph_data += scatter_points(points, markersize=4, color='deepskyblue')
-            graph_data[-1].name = 'True electron shower 1st steps'
-
-            #points = np.array([s.first_edep[0:3] for s in self.output['electronShowers']])
-            #graph_data += scatter_points(points, markersize=5, color='deepskyblue')
-            #graph_data[-1].name = 'True electron shower 1st edeps'
-        '''
-
-        # Add points from true photonShowers
-        # ------------------------------------
-        '''
-        colors = plotly.colors.qualitative.Light24
-        for i, s in enumerate(self.output['photonShowers']):
-            if len(s.voxels)<1:
-                continue
-            color = colors[(i+6) % (len(colors))]
-            graph_data += scatter_points(np.asarray(s.voxels),markersize=2,color=color)
-            graph_data[-1].name = 'True photon shower %d (edep: %.2f)' %(i,s.edep_tot)
-
-        if len(self.output['photonShowers'])>0:
-            #points = np.array([s.start[0:3] for s in self.output['photonShowers']])
-            #graph_data += scatter_points(points, markersize=3, color='darkturquoise')
-            #graph_data[-1].name = 'True photon shower starts'
-
-            points = np.array([s.first_step[0:3] for s in self.output['photonShowers']])
-            graph_data += scatter_points(points, markersize=4, color='darkturquoise')
-            graph_data[-1].name = 'True photon shower 1st steps'
-
-            #points = np.array([s.first_edep[0:3] for s in self.output['photonShowers']])
-            #graph_data += scatter_points(points, markersize=5, color='darkturquoise')
-            #graph_data[-1].name = 'True photon shower 1st edeps'
-        '''
-
-        # Add points from true comptonShowers
-        # ------------------------------------
-        '''
-        colors = plotly.colors.qualitative.Light24
-        for i, s in enumerate(self.output['comptonShowers']):
-            if len(s.voxels)<1:
-                continue
-            color = colors[(i+12) % (len(colors))]
-            graph_data += scatter_points(np.asarray(s.voxels),markersize=2,color=color)
-            graph_data[-1].name = 'True compton shower %d (edep: %.2f)' %(i,s.edep_tot)
-
-        if len(self.output['comptonShowers'])>0:
-            #points = np.array([s.start[0:3] for s in self.output['comptonShowers']])
-            #graph_data += scatter_points(points, markersize=3, color='darkcyan')
-            #graph_data[-1].name = 'True compton shower starts'
-
-            points = np.array([s.first_step[0:3] for s in self.output['comptonShowers']])
-            graph_data += scatter_points(points, markersize=4, color='darkcyan')
-            graph_data[-1].name = 'True compton shower 1st steps'
-
-            #points = np.array([s.first_edep[0:3] for s in self.output['comptonShowers']])
-            #graph_data += scatter_points(points, markersize=5, color='darkcyan')
-            #graph_data[-1].name = 'True compton shower 1st edeps'
-        '''
-
-        # Add points from recoShowers
-        # ------------------------------------
-        #'''
-        colors = plotly.colors.qualitative.Light24
-        for i, s in enumerate(self.output['showers']):
-            if len(s.voxels)<1:
-                continue
-            color = colors[(i+18) % (len(colors))]
-            points = energy[shower_mask][s.voxels]
-            graph_data += scatter_points(points,markersize=2,color=color)
-            #graph_data[-1].name = 'Reco shower %d (n_edeps=%d, edep=%.2f, L_e=%.3f, L_p=%.3f, dir=[%.2f,%.2f,%.2f])' % (i,len(s.voxels),s.energy,s.L_e,s.L_p,s.direction[0],s.direction[1],s.direction[2])
-            graph_data[-1].name = 'Reco shower %d (edep: %.2f, dir: %.1f %.1f %.1f)' %(i,s.energy,s.direction[0],s.direction[1],s.direction[2])
-
-        if len(self.output['showers'])>0:
-            points = np.array([s.start for s in self.output['showers']])
-            graph_data += scatter_points(points, markersize=3, color='gold')
-            graph_data[-1].name = 'Reco shower starts'
-
-            points = np.array([s.start for s in self.output['showers']])
-            dirs = np.array([s.direction for s in self.output['showers']])
-            cone_start = points[:,:3]
-            arrows = go.Cone(x=cone_start[:,0], y=cone_start[:,1], z=cone_start[:,2],
-                             u=-dirs[:,0], v=-dirs[:,1], w=-dirs[:,2],
-                             sizemode='absolute', sizeref=1.0, anchor='tip',
-                             showscale=False, opacity=0.4)
-            #graph_data.append(arrows)
-        #'''
-
-
-        # Add true pi0 decay points
-        # ------------------------------------
-        #'''
-        if len(self.true_info['gamma_pos'])>0:
-            true_pi0_decays = self.true_info['gamma_pos']
-            graph_data += scatter_points(numpy.asarray(true_pi0_decays),markersize=5, color='green')
-            graph_data[-1].name = 'True pi0 decay vertices'
-        #'''
-
-        # Add reconstructed pi0 decay points
-        # ------------------------------------
-        #'''
-        try:
-            reco_pi0_decays = self.output['vertices']
-            graph_data += scatter_points(numpy.asarray(reco_pi0_decays),markersize=4, color='lightgreen')
-            graph_data[-1].name = 'Reconstructed pi0 decay vertices'
-        except:
-            pass
-        #'''
-
-        # Add true photons 1st steps
-        # ------------------------------------
-        '''
-        if len(self.true_info['gamma_first_step'])>0:
-            true_gammas_first_steps = self.true_info['gamma_first_step']
-            #print(' true_gammas_first_steps: ', true_gammas_first_steps)
-            graph_data += scatter_points(numpy.asarray(true_gammas_first_steps), markersize=5, color='magenta')
-            graph_data[-1].name = 'True photons 1st steps'
-        '''
-
-        # Add compton electrons 1st steps
-        # ------------------------------------
-        '''
-        if len(self.true_info['compton_electron_first_step'])>0:
-            compton_electrons_first_steps = self.true_info['compton_electron_first_step']
-            #print(' compton_electrons_first_steps: ', compton_electrons_first_steps)
-            graph_data += scatter_points(numpy.asarray(compton_electrons_first_steps), markersize=5, color='green')
-            graph_data[-1].name = 'True compton electrons 1st steps'
-        '''
-        # Add shower's true 1st (in time) step
-        # ------------------------------------
-        '''
-        if len(self.true_info['shower_first_edep'])>0:
-            shower_first_edep = self.true_info['shower_first_edep']
-            #print(' shower_first_edep: ', shower_first_edep)
-            graph_data += scatter_points(numpy.asarray(shower_first_edep), markersize=5, color='red')
-            graph_data[-1].name = 'True showers 1st steps'
-        '''
-
-        # Add manually defined 3D points
-        # ------------------------------------
-        '''
-        point_01 = np.array([469.86045002, 231.30654507, 514.07204156])
-        #point_02 = np.array([406.88129432, 233.21140603, 107.01647391])
-        #points = [np.asarray(point_01), np.asarray(point_02)] #,[325.2, 584.6, 312.3]]
-        points = [np.asarray(point_01)]
-        graph_data += scatter_points(numpy.asarray(points),markersize=4, color='orange')
-        graph_data[-1].name = 'Manually defined point'
-
-        point_02 = np.array([471.35858971, 244.42353517, 516.28956703])
-        points = [np.asarray(point_02)]
-        graph_data += scatter_points(numpy.asarray(points),markersize=4, color='lightgreen')
-        graph_data[-1].name = 'Vtx candidate'
-        '''
-
-        # Add points predicted by PPN
-        # ------------------------------------
-        #'''
-        if self.output['PPN_track_points']:
-            points = np.array([i.ppns for i in self.output['PPN_track_points']])
-            graph_data += scatter_points(points,markersize=4,color='magenta')
-            graph_data[-1].name = 'PPN track points'
-        if self.output['PPN_shower_points']:
-            points = np.array([i.ppns for i in self.output['PPN_shower_points']])
-            graph_data += scatter_points(points,markersize=4,color='purple')
-            graph_data[-1].name = 'PPN shower points'
-        '''
-        if self.output['PPN_michel_points']:
-            points = np.array([i.ppns for i in self.output['PPN_michel_points']])
-            graph_data += scatter_points(points,markersize=4,color='purple')
-            graph_data[-1].name = 'PPN michel points'
-        if self.output['PPN_delta_points']:
-            points = np.array([i.ppns for i in self.output['PPN_delta_points']])
-            graph_data += scatter_points(points,markersize=4,color='purple')
-            graph_data[-1].name = 'PPN delta points'
-        if self.output['PPN_LEScat_points']:
-            points = np.array([i.ppns for i in self.output['PPN_LEScat_points']])
-            graph_data += scatter_points(points,markersize=4,color='purple')
-            graph_data[-1].name = 'PPN LEScatter points'
-        '''
-
-        # Add true photon's directions (based on true pi0 decay vertex and true photon's 1st steps)
-        # ------------------------------------
-        #'''
-        if 'gamma_pos' in self.true_info and 'gamma_first_step' in self.true_info:
-            for i, true_dir in enumerate(self.true_info['gamma_pos']):
-                vertex = self.true_info['gamma_pos'][i]
-                first_steps = self.true_info['gamma_first_step'][i]
-                points = [vertex, first_steps]
-                graph_data += scatter_points(np.array(points),markersize=4,color='blue')
-                graph_data[-1].name = 'True photon %i vertex to first step (einit: %.2f, edep: %.2f)'\
-                                       %(i,self.true_info['gamma_ekin'][i],self.true_info['gamma_edep'][i])
-                graph_data[-1].mode = 'lines,markers'
-        #'''
-
-        # Add true photon's directions (based on true pi0 decay vertex and true photon's 1st (in time) edep)
-        # ------------------------------------
-        '''
-        if 'gamma_pos' in self.true_info and 'shower_first_edep' in self.true_info:
-            for i, true_dir in enumerate(self.true_info['gamma_pos']):
-                vertex = self.true_info['gamma_pos'][i]
-                first_edeps = self.true_info['shower_first_edep'][i]
-                points = [vertex, first_edeps]
-                graph_data += scatter_points(np.array(points),markersize=4,color='green')
-                graph_data[-1].name = 'True photon %i: vertex to first edep' % i
-                graph_data[-1].mode = 'lines,markers'
-        '''
-
-        # Add reconstructed pi0 decays, join vertex to start points
-        # ------------------------------------
-        #'''
-        if 'matches' in self.output:
-            for i, match in enumerate(self.output['matches']):
-                v = self.output['vertices'][i]
-                idx1, idx2 = match
-                s1, s2 = self.output['showers'][idx1].start, self.output['showers'][idx2].start
-                points = [v, s1, v, s2]
-                graph_data += scatter_points(np.array(points),color='red')
-                graph_data[-1].name = 'Reconstructed pi0 (%.2f MeV)' % self.output['masses'][i]
-                graph_data[-1].mode = 'lines,markers'
-        #'''
-
-        # Add outer module dimensions (TODO: Check dimensions, probably add active volumes instead of outer module edges)
-        # ------------------------------------
-        #'''
-        module_array = [2,2] # number of modules in x and y direction
-        module_dimensions = [378, 378, 756] # x, y, z (in units of pixels)
-        low_corners = []
-        high_corners = []
-        # Loop over all modules to obtain low and high corners
-        for x_axis in range(module_array[0]):
-            for y_axis in range(module_array[1]):
-                low_corners.append([x_axis*module_dimensions[0], y_axis*module_dimensions[1], 0])
-                high_corners.append([(x_axis+1)*module_dimensions[0], (y_axis+1)*module_dimensions[1], module_dimensions[2]])
-        # Add module edges to graph_data
-        for module_nr in range(len(low_corners)):
-            points = []
-            points.append([low_corners[module_nr][0],low_corners[module_nr][1],low_corners[module_nr][2]])
-            points.append([low_corners[module_nr][0],low_corners[module_nr][1],high_corners[module_nr][2]])
-            points.append([low_corners[module_nr][0],high_corners[module_nr][1],high_corners[module_nr][2]])
-            points.append([low_corners[module_nr][0],high_corners[module_nr][1],low_corners[module_nr][2]])
-            points.append([low_corners[module_nr][0],low_corners[module_nr][1],low_corners[module_nr][2]])
-            points.append([high_corners[module_nr][0],low_corners[module_nr][1],low_corners[module_nr][2]])
-            points.append([high_corners[module_nr][0],low_corners[module_nr][1],high_corners[module_nr][2]])
-            points.append([high_corners[module_nr][0],high_corners[module_nr][1],high_corners[module_nr][2]])
-            points.append([high_corners[module_nr][0],high_corners[module_nr][1],low_corners[module_nr][2]])
-            points.append([high_corners[module_nr][0],low_corners[module_nr][1],low_corners[module_nr][2]])
-            points.append([high_corners[module_nr][0],low_corners[module_nr][1],high_corners[module_nr][2]])
-            points.append([low_corners[module_nr][0],low_corners[module_nr][1],high_corners[module_nr][2]])
-            points.append([low_corners[module_nr][0],high_corners[module_nr][1],high_corners[module_nr][2]])
-            points.append([high_corners[module_nr][0],high_corners[module_nr][1],high_corners[module_nr][2]])
-            points.append([high_corners[module_nr][0],high_corners[module_nr][1],low_corners[module_nr][2]])
-            points.append([low_corners[module_nr][0],high_corners[module_nr][1],low_corners[module_nr][2]])
-            graph_data += scatter_points(np.array(points),color='#53EB83')
-            graph_data[-1].mode = 'lines'
-            graph_data[-1].name = 'Module %i' %module_nr
-        #'''
-
-        # Draw
-        iplot(go.Figure(data=graph_data,layout=self.layout(**kargs)))
-
-
-#    @staticmethod
-#    def is_shower(particle):
-#        '''
-#        Check if the particle is a shower
-#        '''
-#        pdg_code = abs(particle.pdg_code())
-#        if not pdg_code == 22 and not pdg_code == 11 :
-#            return False
-#
-#        return False
+    def draw(self, **kwargs):
+        """
+        Draws the event processed in the last run_loop.
+        """
+        draw_event(self._output, self._analyser.true_info, **kwargs)
