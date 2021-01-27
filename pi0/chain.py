@@ -159,6 +159,11 @@ class Pi0Chain:
         self._data_set = iter(self._hs.data_io)
 
 
+    @property
+    def output(self):
+        return self._output
+
+
     @staticmethod
     def get_cluster_label(data, clusts, column):
         labels = []
@@ -375,8 +380,10 @@ class Pi0Chain:
 
         elif self._shower_fragment == 'dbscan':
             # Cluster shower energy depositions using dbscan
-            clusts, remaining_clusts, remaining_energy = self._frag_est.create_clusters(shower_points, shower_starts)
-            self._output['shower_fragments'] = [self._output['shower_mask'][c] for c in clusts]
+            shower_points    = self._output['energy'][self._output['shower_mask']]
+            _, fragments, _  = self._frag_est.create_clusters(shower_points)
+            same_length      = np.all([len(f) == len(fragments[0]) for f in fragments])
+            self._output['shower_fragments'] = np.array([self._output['shower_mask'][f] for f in fragments], dtype=object if not same_length else np.int64)
 
         elif self._shower_fragment == 'gnn':
             # If the network already clustered the shower fragments, use as is

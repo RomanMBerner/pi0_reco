@@ -10,7 +10,9 @@ from scipy.spatial.distance import cdist
 class DBSCANCluster:
 
     def __init__(self, eps=6.0, min_samples=5):
-
+        '''
+        Initialize the DBSCAN algorithm
+        '''
         self._clusterer = DBSCAN(eps=eps, min_samples=min_samples)
 
 
@@ -62,7 +64,7 @@ class DBSCANCluster:
         return clusts, used_clusts
 
 
-    def create_clusters(self, shower_energy, primaries):
+    def create_clusters(self, shower_energy, primaries=None):
         """
         Inputs:
             - shower_energy (np.ndarray): energy depo array for SHOWERS ONLY
@@ -76,15 +78,22 @@ class DBSCANCluster:
         labels = self.make_shower_frags(shower_energy)
         coords = shower_energy[:, :3]
         self._coords = coords
-        Y = cdist(coords, primaries[:, :3])
-        min_dists, ind = np.min(Y, axis=1), np.argmin(Y, axis=0)
-        frags = labels[ind]
-        clusts, used_clusts = self.find_cluster_indices(coords, labels, frags)
-        self._clusts = clusts
-        remaining_labels = [l for l in np.unique(labels) if not l in used_clusts and l >=0]
-        remaining_clusts = [np.where(labels == l)[0] for l in remaining_labels]
-        remaining_energy = np.where(labels == -1)[0]
-        return clusts, remaining_clusts, remaining_energy
+        if primaries is not None:
+            Y = cdist(coords, primaries[:, :3])
+            min_dists, ind = np.min(Y, axis=1), np.argmin(Y, axis=0)
+            frags = labels[ind]
+            clusts, used_clusts = self.find_cluster_indices(coords, labels, frags)
+            self._clusts = clusts
+            remaining_labels = [l for l in np.unique(labels) if not l in used_clusts and l >=0]
+            remaining_clusts = [np.where(labels == l)[0] for l in remaining_labels]
+            remaining_energy = np.where(labels == -1)[0]
+            return clusts, remaining_clusts, remaining_energy
+        else:
+            self._clusts = []
+            remaining_clusts = [np.where(labels == l)[0] for l in np.unique(labels) if l != -1]
+            remaining_energy = np.where(labels == -1)[0]
+            return [], remaining_clusts, remaining_energy
+
 
     def set_labels(self):
         labels = -np.ones((self.coords.shape[0], ))
