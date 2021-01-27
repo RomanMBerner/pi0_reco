@@ -204,31 +204,13 @@ def draw_event(output, truth, **kwargs):
     graph_data[-1].name = 'Vtx candidate'
     '''
 
-    # Add points predicted by PPN
+    # Add track points predicted by PPN
     # ------------------------------------
     #'''
     if 'ppn_track_points' in output:
-        points = np.array([i.ppns for i in output['ppn_track_points']])
+        points = output['ppn_track_points']
         graph_data += scatter_points(points,markersize=4,color='magenta')
         graph_data[-1].name = 'PPN track points'
-    # if 'ppn_shower_points' in output:
-    #     points = np.array([i.ppns for i in output['ppn_shower_points']])
-    #     graph_data += scatter_points(points,markersize=4,color='purple')
-    #     graph_data[-1].name = 'PPN shower points'
-    '''
-    if output['PPN_michel_points']:
-        points = np.array([i.ppns for i in output['PPN_michel_points']])
-        graph_data += scatter_points(points,markersize=4,color='purple')
-        graph_data[-1].name = 'PPN michel points'
-    if output['PPN_delta_points']:
-        points = np.array([i.ppns for i in output['PPN_delta_points']])
-        graph_data += scatter_points(points,markersize=4,color='purple')
-        graph_data[-1].name = 'PPN delta points'
-    if output['PPN_LEScat_points']:
-        points = np.array([i.ppns for i in output['PPN_LEScat_points']])
-        graph_data += scatter_points(points,markersize=4,color='purple')
-        graph_data[-1].name = 'PPN LEScatter points'
-    '''
 
     # Add true photon's directions (based on true pi0 decay vertex and true photon's 1st steps)
     # ------------------------------------

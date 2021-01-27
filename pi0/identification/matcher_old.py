@@ -7,7 +7,7 @@ class Pi0Matcher():
     def __init__(self, **kwargs):
         pass
 
-    def find_matches(self, reco_showers, segment, method, *ppn_track_points):
+    def find_matches(self, reco_showers, segment, method, ppn_track_points=None):
         '''
         Project 2 paired gammas back to their crossing point and return nearest
         (within tolerance) track labeled hit as vertex candidate
@@ -64,9 +64,7 @@ class Pi0Matcher():
                 return matches, vertices
 
             # For all CPAs: Find track-labeled PPN points close to a CPA
-            ppns = []
-            for point in ppn_track_points[0]:
-                ppns.append([point.ppns[0], point.ppns[1], point.ppns[2]])
+            ppns = ppn_track_points
 
             tolerance_CPA_to_PPN = 40. # defines the max. allowed distance of a CPA to the closest track-labeled PPN point
             # TODO: READ FROM CONFIG FILE OR FEED IN find_matches_function // TODO: Better organize all tolerance parameters
