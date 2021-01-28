@@ -4,7 +4,7 @@ from scipy.spatial import distance
 
 class Pi0Matcher():
 
-    def find_matches(self, reco_showers, segment, method, *ppn_track_points):
+    def find_matches(self, reco_showers, segment, method, verbose, *ppn_track_points):
         '''
         Project 2 paired gammas back to their crossing point and return nearest 
         (within tolerance) track labeled hit as vertex candidate
@@ -15,12 +15,14 @@ class Pi0Matcher():
             #- sh_energies (M x 3): array of shower energies
             - segment (N x 5): array of voxels and their semantic segmentation labels
             - method: proximity or ppn
+            - verbose: if more printouts should be made
             - ppn_track_points (K x 3): array of track-labeled PPN points (K points, 3 coordinates each)
         Returns:
             - matches: Array of id pairs (one per pair of matched showers)
             - vertices: Array of the corresponding pi0 decay vertices
         '''
-
+        self.verbose = verbose
+        
         sh_starts     = []
         sh_directions = []
         sh_energies   = []
@@ -55,7 +57,7 @@ class Pi0Matcher():
             
             # For all showers: Find pair-wise CPAs and closest distance of a shower's direction to the CPAs
             energy_threshold        = 15. # minimum energy [MeV] needed for showers to be taken into account in the search for pair-wise CPAs
-            tolerance_CPA_to_shower = 20. # defines the max. dist. allowed of a CPA to the closest point on the shower's direction axis
+            tolerance_CPA_to_shower = 30. # defines the max. dist. allowed of a CPA to the closest point on the shower's direction axis
             CPAs = self.find_pair_wise_CPAs(np.array(sh_energies),\
                                             np.array(sh_starts),\
                                             np.array(sh_directions),\
@@ -85,7 +87,7 @@ class Pi0Matcher():
             ppn_candidates = self.find_PPNs_close_to_CPAs(CPAs, ppns, tolerance_CPA_to_PPN)
             if len(ppn_candidates)==0:
                 return matches, vertices
-            #print(' ppn_candidates: ', ppn_candidates)
+            #print(' ppn_candidates (close to CPAs): ', ppn_candidates)
             
             # Check if there is at least 1 PPN candidate which could be a pi0 decay vertex
             n_ppn_candidates = 0
@@ -104,6 +106,7 @@ class Pi0Matcher():
             ppn_candidates = self.reject_electronic_showers(np.array(sh_starts), ppn_candidates, min_distance)
             # TODO: Maybe also consider: If > NUMBER track-labeled edeps are within RADIUS around shower_start: Reject?
             # Note: Sometimes, semantic segmentation makes mistake at the very beginning of a shower...
+            #print(' ppn_candidates (electrons rejected): ', ppn_candidates)
 
             # Find showers with a direction approximatively (shower_start - vertex_candidate), 
             # reject showers starting too close (< min_distance) to a vertex candidate (e.g. from electrons)
@@ -119,6 +122,8 @@ class Pi0Matcher():
                                                                           np.array(sh_directions),\
                                                                           ppn_candidates,\
                                                                           angular_tolerance)
+            #print(' vertex_candidates: ', vertex_candidates)
+            #print(' angle_matrix: ', angle_matrix)
             
             # Match shower pairs to pi0 decays
             max_angle_sum = 40. # defining the max. allowed sum of both angle-differences (between sh_i_direction and sh_i_start-vtx_candidate)
@@ -126,6 +131,8 @@ class Pi0Matcher():
                                 # TODO: Read from config file?
                                 # TODO: Optimise this value (it's probably too large)
             matches, vertices = self.find_photon_pairs(vertex_candidates, angle_matrix, max_angle_sum)
+            #print(' matches: ', matches)
+            #print(' vertices: ', vertices)
 
             # Return
             return matches, vertices
@@ -258,12 +265,13 @@ class Pi0Matcher():
         Returns:
             - triangular (M x M)-matrix where the elements are the CPA coordinates between pairs of reco showers
         '''
-        #print(' ------- in function find_pair_wise_CPAs -------')
-        #print(' sh_energies:              ', sh_energies)
-        #print(' sh_starts:                ', sh_starts)
-        #print(' sh_directions:            ', sh_directions)
-        #print(' tolerance_CPA_to_shower:  ', tolerance_CPA_to_shower)
-        #print(' energy_threshold:         ', energy_threshold)
+        if self.verbose:
+            print(' ------- in function find_pair_wise_CPAs -------')
+            print(' sh_energies:              ', sh_energies)
+            print(' sh_starts:                ', sh_starts)
+            print(' sh_directions:            ', sh_directions)
+            print(' tolerance_CPA_to_shower:  ', tolerance_CPA_to_shower)
+            print(' energy_threshold:         ', energy_threshold)
         
         # Get CPAs between all shower pairs (and the distance between the two lines of the shower directions)
         n_sh = len(sh_energies)
@@ -340,8 +348,8 @@ class Pi0Matcher():
                     CPAs[i,j] = CPA
                 else:
                     CPAs[i,j] = np.array([-float('inf'),-float('inf'),-float('inf')])
-                
-        #print(' CPAs: ', CPAs)
+        #if self.verbose:  
+            #print(' CPAs: ', CPAs)
         return np.array(CPAs)
 
     
@@ -355,10 +363,11 @@ class Pi0Matcher():
         Returns:
             - (M x M)-matrix where the elements are np.arrays of PPN points
         '''
-        #print(' ------- in function find_PPNs_close_to_CPAs -------')
-        #print(' CPAs:                 ', CPAs)
-        #print(' ppns:                 ', ppns)
-        #print(' tolerance_CPA_to_PPN: ', tolerance_CPA_to_PPN)
+        if self.verbose:
+            print(' ------- in function find_PPNs_close_to_CPAs -------')
+            #print(' CPAs:                 ', CPAs)
+            print(' ppns:                 ', ppns)
+            print(' tolerance_CPA_to_PPN: ', tolerance_CPA_to_PPN)
         
         # Check that CPAs matrix is quadratic
         assert np.shape(CPAs)[0] == np.shape(CPAs)[1]
@@ -386,9 +395,9 @@ class Pi0Matcher():
                             accepted_PPNs.append(ppn)
                             #print(' Accepted PPN: ', ppn)
                     ppn_candidates[i,j] = accepted_PPNs
-
-        #print(' ppn_candidates: ')
-        #print(ppn_candidates)
+        if self.verbose:
+            print(' ppn_candidates: ')
+            print(ppn_candidates)
         return ppn_candidates
     
     
@@ -405,10 +414,11 @@ class Pi0Matcher():
         Returns:
             - updated (M x M)-matrix where the elements are np.arrays of PPN points
         '''
-        #print(' ------- in function reject_electronic_showers -------')
-        #print(' sh_starts:           ', sh_starts)
-        #print(' ppn_candidates:      ', ppn_candidates)
-        #print(' min_distance:        ', min_distance)
+        if self.verbose:
+            print(' ------- in function reject_electronic_showers -------')
+            print(' sh_starts:           ', sh_starts)
+            print(' ppn_candidates:      ', ppn_candidates)
+            print(' min_distance:        ', min_distance)
         
         for shower_1 in range(len(sh_starts)): #range(np.shape(ppn_candidates)[0]):
             for shower_2 in range(shower_1+1, len(sh_starts)): #range(shower_1+1, np.shape(ppn_candidates)[1]):
@@ -416,6 +426,8 @@ class Pi0Matcher():
                     dist_1 = np.linalg.norm(sh_starts[shower_1]-vtx_cand)
                     dist_2 = np.linalg.norm(sh_starts[shower_2]-vtx_cand)
                     if dist_1<min_distance or dist_2<min_distance:
+                        if self.verbose:
+                            print(' reject because shower start is too close to the ppn point: dist_1 =', dist_1, ' \t dist_2 =', dist_2)
                         ppn_candidates[shower_1][shower_2] = []
         
         return ppn_candidates
@@ -433,11 +445,12 @@ class Pi0Matcher():
             - (M,M)-matrix where each elements is an np.array of the 3D vertex position
             - (M,M)-matrix where each elements is the angular agreement of the shower's directions and the vertex candidate
         '''
-        #print(' ------- in function find_vertex_candidates -------')
-        #print(' sh_starts:           ', sh_starts)
-        #print(' sh_directions:       ', sh_directions)
-        #print(' ppn_candidates:      ', ppn_candidates)
-        #print(' angular_tolerance:   ', angular_tolerance)
+        if self.verbose:
+            print(' ------- in function find_vertex_candidates -------')
+            print(' sh_starts:           ', sh_starts)
+            print(' sh_directions:       ', sh_directions)
+            print(' ppn_candidates:      ', ppn_candidates)
+            print(' angular_tolerance:   ', angular_tolerance)
        
         # Get matrix with angular agreements
         angular_agreement = np.zeros((len(sh_starts),len(sh_starts)), dtype=object)
@@ -451,7 +464,7 @@ class Pi0Matcher():
             
             # Continue if shower_1 does not have an allocated direction
             if np.linalg.norm(sh_directions[shower_1]) == 0.:
-                #print(' WARNING: direction of shower', shower_1, 'not allocated... ')
+                print(' WARNING: direction of shower', shower_1, 'not allocated... ')
                 for shower_2 in range(np.shape(angular_agreement)[1]):
                         angular_agreement[shower_1][shower_2] = []
                 continue
@@ -465,7 +478,7 @@ class Pi0Matcher():
                 
                 # Continue if shower_2 does not have an allocated direction
                 if np.linalg.norm(sh_directions[shower_2]) == 0.:
-                    #print(' WARNING: direction of shower', shower_2, 'not allocated... ')
+                    print(' WARNING: direction of shower', shower_2, 'not allocated... ')
                     angular_agreement[shower_1,shower_2] = []
                     continue
                 
@@ -481,13 +494,17 @@ class Pi0Matcher():
                         
                         # Reject if one of the angles is larger than the angular_tolerance
                         if angle_1>angular_tolerance or angle_2>angular_tolerance:
+                            #print(' INFO: angle_1', angle_1, '>', angular_tolerance, '(shower', shower_1,\
+                            #                ') or', angle_2, '>', angular_tolerance, '(shower', shower_2,\
+                            #                '), vtx_cand:', vtx_cand, ' --> continue ...')
                             agreement.append([float('inf'),float('inf')])
                         else:
                             agreement.append([angle_1,angle_2])
                     angular_agreement[shower_1,shower_2] = agreement
                 else:
                     angular_agreement[shower_1,shower_2] = []
-        #print('angular_agreement', angular_agreement)
+        if self.verbose:
+            print('angular_agreement', angular_agreement)
         
         # For every shower-pair, only keep the vtx_candidate with the best angular_agreement
         vertex_candidates = np.zeros((len(sh_starts),len(sh_starts)), dtype=object)
@@ -499,8 +516,9 @@ class Pi0Matcher():
                 min_angle_pair = float('inf')
                 min_pair_index = -1
                 for pair_index, angle_pair in enumerate(angular_agreement[i][j]):
-                    #print(' pair_index: ', pair_index)
-                    #print(' angle_pair: ', angle_pair)
+                    if self.verbose:
+                        print(' pair_index: ', pair_index)
+                        print(' angle_pair: ', angle_pair)
                     summed_angles = float('inf')
                     if angle_pair[0] != -float('inf') and angle_pair[1] != -float('inf'):
                         summed_angles = angle_pair[0] + angle_pair[1]
@@ -528,9 +546,10 @@ class Pi0Matcher():
         Returns:
             - matches: Array of shower_id pairs (one per pair of matched showers)
         '''
-        #print(' ------- in function find_photon_pairs -------')
-        #print(' vertex_candidates: ', vertex_candidates)
-        #print(' angle_matrix:      ', angle_matrix)
+        if self.verbose:
+            print(' ------- in function find_photon_pairs -------')
+            print(' vertex_candidates: ', vertex_candidates)
+            print(' angle_matrix:      ', angle_matrix)
         
         angle_sum_matrix = np.full((np.shape(angle_matrix)[0],np.shape(angle_matrix)[1]), float('inf'))
         
@@ -539,8 +558,9 @@ class Pi0Matcher():
                 #print(angle_matrix[i][j])
                 if len(angle_matrix[i][j]) > 0:
                     angle_sum_matrix[i][j] = angle_matrix[i][j][0] + angle_matrix[i][j][1]
-        #print(' angle_sum_matrix: ')
-        #print(angle_sum_matrix)
+            if self.verbose:
+                print(' angle_sum_matrix: ')
+                print(angle_sum_matrix)
         
         matches = []
         pi0_vertices = []
@@ -559,7 +579,8 @@ class Pi0Matcher():
                 angle_sum_matrix[:,indices[0][0]] = float('inf')
                 angle_sum_matrix[indices[0][1],:] = float('inf')
                 angle_sum_matrix[:,indices[0][1]] = float('inf')
-        #print(' matches:      ', matches)
-        #print(' pi0_vertices: ', pi0_vertices)
+        if self.verbose:
+            print(' matches:      ', matches)
+            print(' pi0_vertices: ', pi0_vertices)
 
         return matches, pi0_vertices
