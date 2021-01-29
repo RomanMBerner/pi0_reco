@@ -160,6 +160,9 @@ class Analyser():
         self.true_info['OOFV']                           = [] # [-]      # If shower has >0 edep(s) close to the LAr volume boundary.
                                                                          # Note: If photon leaves detector without producing an edep, this is NOT classified as OOFV.
                                                                          # For those events: Consider self.true_info['n_voxels']
+        self.true_info['primaries_pdg_code']             = [] # [-]      # PDG codes of primary particles
+        self.true_info['primaries_einit']                = [] # [MeV]    # initial energy of primary particles
+        self.true_info['primaries_mom']                  = [] # [MeV/c]  # initial three momentum of primary particles
         return
     
     
@@ -202,6 +205,15 @@ class Analyser():
         parent_tids_of_true_photons   = [] # photons from the same pi0 decay have the same parent_track_id
         ids_of_photons_making_compton = [] # True or False for every true photon
         compton_electron_first_step   = [] # [x,y,z] coordinates of compton electrons first step
+        
+        # Get primary particles:
+        # Primary pi0s are not in here...
+        for i, p in enumerate(self.event['particles'][0]):
+            #print(p.dump())
+            if p.parent_pdg_code() == 0:
+                self.true_info['primaries_pdg_code'].append(p.pdg_code())
+                self.true_info['primaries_einit'].append(p.energy_init())
+                self.true_info['primaries_mom'].append([p.px(),p.py(),p.pz()])
         
         # Get photons from pi0 decays:
         # Note: Photons from the same pi0 have the same parent_track_id.
