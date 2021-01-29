@@ -40,8 +40,11 @@ class ElectronPhoton_Separation():
             #print(' sh.L_e:        ', sh.L_e)
             #print(' sh.L_p:        ', sh.L_p)
             
-            coords     = sh_energy_masked[sh.voxels][:,0:3] + 0.5 # add 0.5 in order to get the voxel middle
-            edeps      = sh_energy_masked[sh.voxels][:,4]
+            #coords     = sh_energy_masked[sh.voxels][:,0:3] + 0.5 # add 0.5 in order to get the voxel middle
+            #edeps      = sh_energy_masked[sh.voxels][:,4]
+            # TODO: above method is not working anymore... -> Check the reason!
+            coords     = np.array([sh_energy_masked[vox,0:3] + 0.5 for vox in sh.voxels]) # add 0.5 in order to get the voxel middle
+            edeps      = np.array([sh_energy_masked[vox,4] for vox in sh.voxels])
             
             summed_edeps = 0.
             
@@ -63,8 +66,12 @@ class ElectronPhoton_Separation():
             #print(' p_likelihood: ', p_likelihood)
             
             # Obtain likelihood fractions
-            sh.L_e = e_likelihood / (e_likelihood + p_likelihood)
-            sh.L_p = p_likelihood / (e_likelihood + p_likelihood)
+            if (e_likelihood + p_likelihood) > 0:
+                sh.L_e = e_likelihood / (e_likelihood + p_likelihood)
+                sh.L_p = p_likelihood / (e_likelihood + p_likelihood)
+            else:
+                sh.L_e = -999.
+                sh.L_p = -999.
             
             if (sh.L_e + sh.L_p) < 0.999 or (sh.L_e + sh.L_p) > 1.001:
                 print(' WARNING: L_tot = L_e + L_p =', sh.L_e + sh.L_p)

@@ -466,11 +466,11 @@ class Pi0Chain():
         delta_ordered  = np.argsort(delta_total_score)
         LEScat_ordered = np.argsort(LEScat_total_score)
             
-        self.output['PPN_shower_points'] = [ShowerPoints(ppns=shower_points[i,:3],shower_score=i,shower_id=int(i)) for i in shower_ordered]
-        self.output['PPN_track_points']  = [TrackPoints(ppns=track_points[i,:3],track_score=i,track_id=int(i)) for i in track_ordered]
-        self.output['PPN_michel_points'] = [MichelPoints(ppns=michel_points[i,:3],michel_score=i,michel_id=int(i)) for i in michel_ordered]
-        self.output['PPN_delta_points']  = [DeltaPoints(ppns=delta_points[i,:3],delta_score=i,delta_id=int(i)) for i in delta_ordered]
-        self.output['PPN_LEScat_points'] = [LEScatPoints(ppns=LEScat_points[i,:3],LEScat_score=i,LEScat_id=int(i)) for i in LEScat_ordered]
+        self.output['PPN_shower_points'] = [ShowerPoints(ppns=shower_points[i,:3],shower_score=shower_total_score[i],shower_id=int(i)) for i in shower_ordered]
+        self.output['PPN_track_points']  = [TrackPoints(ppns=track_points[i,:3],track_score=track_total_score[i],track_id=int(i)) for i in track_ordered]
+        self.output['PPN_michel_points'] = [MichelPoints(ppns=michel_points[i,:3],michel_score=michel_total_score[i],michel_id=int(i)) for i in michel_ordered]
+        self.output['PPN_delta_points']  = [DeltaPoints(ppns=delta_points[i,:3],delta_score=delta_total_score[i],delta_id=int(i)) for i in delta_ordered]
+        self.output['PPN_LEScat_points'] = [LEScatPoints(ppns=LEScat_points[i,:3],LEScat_score=LEScat_total_score[i],LEScat_id=int(i)) for i in LEScat_ordered]
 
 
     def charge_to_energy(self, event):
@@ -740,9 +740,9 @@ class Pi0Chain():
             shower_points = self.output['energy'][self.output['shower_mask']]
             starts = np.array([s.start for s in self.output['showers']])
             
-            #fragments = [shower_points[inds] for inds in self.output['shower_fragments']] # Had to replace it
+            #fragments = [shower_points[inds] for inds in self.output['shower_fragments']]
+            # TODO: above method is not working anymore... -> Check the reason!
             # (IndexError: arrays used as indices must be of integer (or boolean) type)
-            # TODO: Check why it sometimes works and sometimes not!
             fragments = []
             for ind, frag in enumerate(self.output['shower_fragments']):
                 fragments.append([shower_points[i] for i in frag])
@@ -881,8 +881,13 @@ class Pi0Chain():
 
         elif self.cfg['modules']['shower_energy']['method'] == 'pixel_sum':
             for s in self.output['showers']:
-                s.energy = np.sum(self.output['energy'][self.output['shower_mask']][s.voxels][:,-1])
-
+                #s.energy = np.sum(self.output['energy'][self.output['shower_mask']][s.voxels][:,-1])
+                # TODO: above method is not working anymore... -> Check the reason!
+                _energy = 0.
+                for ind in s.voxels:
+                    _energy += (self.output['energy'][self.output['shower_mask']])[ind,-1]
+                s.energy = _energy
+                
         else:
             raise ValueError('shower_energy method not recognized:', self.cfg['modules']['shower_energy']['method'])
     
@@ -913,7 +918,9 @@ class Pi0Chain():
             # Loop over all showers and select those PPN points which have >10 edeps within a radius of 10 pixels:
             for sh_index, sh in enumerate(self.output['showers']):
                 # Get the energy deposits of the shower
-                edep_pos = self.output['energy'][self.output['shower_mask']][sh.voxels][:,0:3] + 0.5
+                #edep_pos = self.output['energy'][self.output['shower_mask']][sh.voxels][:,0:3] + 0.5
+                # TODO: above method is not working anymore... -> Check the reason!
+                edep_pos = np.array([self.output['energy'][self.output['shower_mask']][i,0:3]+0.5 for i in sh.voxels])
 
                 # Get start point candidates
                 start_point_candidates = []
@@ -1060,7 +1067,7 @@ class Pi0Chain():
                 self.output['matches'], self.output['vertices'], dists = self.matcher.find_matches(self.output['showers'],\
                                                                                                    self.output['segment'],\
                                                                                                    self.cfg['modules']['shower_match']['method'],\
-                                                                                                   self.verbose)
+                                                                                                   self.cfg['modules']['shower_match']['verbose'])
             except ValueError as err:
                 if self.verbose:
                     print('Error in PID:', err)
@@ -1082,19 +1089,22 @@ class Pi0Chain():
             for sh_index, energy in enumerate(sh_energies):
                 print('     ', energy)
             '''
-            if self.true_info['n_pi0'] == 1 and self.reco_info['n_pi0'] != 1:
-                self.verbose = True
-
-            self.verbose = False
+            print(' === PPN track points: ', len(self.output['PPN_track_points']))
+            print(self.output['PPN_track_points'][0])
+            for point in self.output['PPN_track_points']:
+                print(point.ppns[0], point.ppns[1], point.ppns[2], point.track_score, point.track_id)
+            print(' --------- ')
+            print(' === PPN track points: ', self.output['PPN_track_points'])
             self.output['matches'], self.output['vertices'] = self.matcher.find_matches(self.output['showers'],\
                                                                                         self.output['segment'],\
                                                                                         self.cfg['modules']['shower_match']['method'],\
-                                                                                        self.verbose,\
+                                                                                        self.cfg['modules']['shower_match']['verbose'],\
                                                                                         self.output['PPN_track_points'])
         else:
             raise ValueError('Shower matching method not recognized:', self.cfg['modules']['shower_match']['method'])
 
-        if self.cfg['modules']['shower_match']['refit_dir'] and (self.cfg['modules']['shower_match']['method'] == 'proximity' or self.cfg['modules']['shower_match']['method'] == 'ppn'):
+        if self.cfg['modules']['shower_match']['refit_dir'] and\
+          (self.cfg['modules']['shower_match']['method'] == 'proximity' or self.cfg['modules']['shower_match']['method'] == 'ppn'):
             for i, match in enumerate(self.output['matches']):
                 idx1, idx2 = match
                 v = np.array(self.output['vertices'][i])

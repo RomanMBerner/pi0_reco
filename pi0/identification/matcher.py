@@ -16,7 +16,7 @@ class Pi0Matcher():
             - segment (N x 5): array of voxels and their semantic segmentation labels
             - method: proximity or ppn
             - verbose: if more printouts should be made
-            - ppn_track_points (K x 3): array of track-labeled PPN points (K points, 3 coordinates each)
+            - ppn_track_points (K x 5): array of track-labeled PPN points (K points, 3 coordinates + 1 score + 1 trackID each)
         Returns:
             - matches: Array of id pairs (one per pair of matched showers)
             - vertices: Array of the corresponding pi0 decay vertices
