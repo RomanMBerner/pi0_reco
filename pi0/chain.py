@@ -435,14 +435,17 @@ class Pi0Chain:
 
         elif self._shower_primary == 'gnn':
             # For each predicted shower group, pick the most likely node as the primary
-            from scipy.special import softmax
-            node_scores = softmax(self._output['forward']['shower_node_pred'], axis=1)
             group_ids = self._output['forward']['shower_group_pred']
-            primary_mask = np.zeros(len(group_ids), dtype=bool)
-            for g in np.unique(group_ids):
-                mask = np.where(group_ids == g)[0]
-                idx  = node_scores[mask][:,1].argmax()
-                primary_mask[mask[idx]] = True
+            if 'shower_node_pred' not in self._output['forward']:
+                primary_mask = np.ones(1, dtype=bool)
+            else:
+                from scipy.special import softmax
+                node_scores = softmax(self._output['forward']['shower_node_pred'], axis=1)
+                primary_mask = np.zeros(len(group_ids), dtype=bool)
+                for g in np.unique(group_ids):
+                    mask = np.where(group_ids == g)[0]
+                    idx  = node_scores[mask][:,1].argmax()
+                    primary_mask[mask[idx]] = True
 
         # Create one shower object for each primary in the image, store leftover fragments
         self._output['showers'], self._output['leftover_fragments'] = [], []
