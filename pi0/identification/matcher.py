@@ -102,7 +102,7 @@ class Pi0Matcher():
                 return matches, vertices
             
             # Veto showers which have a track-labeled PPN point close (< min_distance) to reco shower start (reject electrons/positrons)
-            min_distance = 3 # reject showers starting close (< min_distance) to a vertex candidate (likely to be electron/positron induced showers)
+            min_distance = 0 # reject showers starting close (< min_distance) to a vertex candidate (likely to be electron/positron induced showers)
             ppn_candidates = self.reject_electronic_showers(np.array(sh_starts), ppn_candidates, min_distance)
             # TODO: Maybe also consider: If > NUMBER track-labeled edeps are within RADIUS around shower_start: Reject?
             # Note: Sometimes, semantic segmentation makes mistake at the very beginning of a shower...
@@ -368,13 +368,13 @@ class Pi0Matcher():
             #print(' CPAs:                 ', CPAs)
             print(' ppns:                 ', ppns)
             print(' tolerance_CPA_to_PPN: ', tolerance_CPA_to_PPN)
-        
+
         # Check that CPAs matrix is quadratic
         assert np.shape(CPAs)[0] == np.shape(CPAs)[1]
-        
+
         # Create matrix for PPN candidates
         ppn_candidates = np.zeros((np.shape(CPAs)[0],np.shape(CPAs)[1]), dtype=object)
-        
+
         # Loop over matrix which contains the CPAs
         for i in range(np.shape(CPAs)[0]):
             for j in range(np.shape(CPAs)[1]):
@@ -394,10 +394,12 @@ class Pi0Matcher():
                         if dist < tolerance_CPA_to_PPN:
                             accepted_PPNs.append(ppn)
                             #print(' Accepted PPN: ', ppn)
+
                     ppn_candidates[i,j] = accepted_PPNs
         if self.verbose:
             print(' ppn_candidates: ')
             print(ppn_candidates)
+
         return ppn_candidates
     
     
@@ -487,11 +489,15 @@ class Pi0Matcher():
                     for vtx_cand in ppn_candidates[shower_1][shower_2]:
                         
                         # Obtain angle [degrees] between sh_direction and sh_start-vtx_candidate_position
-                        angle_1 = np.arccos(np.dot(sh_directions[shower_1],sh_starts[shower_1]-vtx_cand)\
-                                           /(np.linalg.norm(sh_directions[shower_1])*np.linalg.norm(sh_starts[shower_1]-vtx_cand)))*180./(np.pi)
-                        angle_2 = np.arccos(np.dot(sh_directions[shower_2],sh_starts[shower_2]-vtx_cand)\
-                                           /(np.linalg.norm(sh_directions[shower_2])*np.linalg.norm(sh_starts[shower_2]-vtx_cand)))*180./(np.pi)
-                        
+                        if abs(np.linalg.norm(sh_directions[shower_1])*np.linalg.norm(sh_starts[shower_1]-vtx_cand)) > 0. and \
+                           abs(np.linalg.norm(sh_directions[shower_2])*np.linalg.norm(sh_starts[shower_2]-vtx_cand)) > 0.:
+                            angle_1 = np.arccos(np.dot(sh_directions[shower_1],sh_starts[shower_1]-vtx_cand)\
+                                               /(np.linalg.norm(sh_directions[shower_1])*np.linalg.norm(sh_starts[shower_1]-vtx_cand)))*180./(np.pi)
+                            angle_2 = np.arccos(np.dot(sh_directions[shower_2],sh_starts[shower_2]-vtx_cand)\
+                                               /(np.linalg.norm(sh_directions[shower_2])*np.linalg.norm(sh_starts[shower_2]-vtx_cand)))*180./(np.pi)
+                        else:
+                            angle_1 = 0.
+                            angle_2 = 0.
                         # Reject if one of the angles is larger than the angular_tolerance
                         if angle_1>angular_tolerance or angle_2>angular_tolerance:
                             #print(' INFO: angle_1', angle_1, '>', angular_tolerance, '(shower', shower_1,\
