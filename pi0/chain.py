@@ -454,11 +454,11 @@ class Pi0Chain():
         delta_points  = points[np.where(points[:,delta_score_index]  > float(thresholds[3]))]
         LEScat_points = points[np.where(points[:,LEScat_score_index] > float(thresholds[4]))]
             
-        shower_total_score = shower_points[:,shower_score_index] * shower_points[:,point_score_index]
-        track_total_score  = track_points[:,track_score_index]   * track_points[:,point_score_index]
-        michel_total_score = michel_points[:,michel_score_index] * michel_points[:,point_score_index]
-        delta_total_score  = delta_points[:,delta_score_index]   * delta_points[:,point_score_index]
-        LEScat_total_score = LEScat_points[:,LEScat_score_index] * LEScat_points[:,point_score_index]
+        shower_total_score = shower_points[:,shower_score_index] # * shower_points[:,point_score_index]
+        track_total_score  = track_points[:,track_score_index]   # * track_points[:,point_score_index]
+        michel_total_score = michel_points[:,michel_score_index] # * michel_points[:,point_score_index]
+        delta_total_score  = delta_points[:,delta_score_index]   # * delta_points[:,point_score_index]
+        LEScat_total_score = LEScat_points[:,LEScat_score_index] # * LEScat_points[:,point_score_index]
             
         shower_ordered = np.argsort(shower_total_score)
         track_ordered  = np.argsort(track_total_score)
@@ -1089,12 +1089,6 @@ class Pi0Chain():
             for sh_index, energy in enumerate(sh_energies):
                 print('     ', energy)
             '''
-            print(' === PPN track points: ', len(self.output['PPN_track_points']))
-            print(self.output['PPN_track_points'][0])
-            for point in self.output['PPN_track_points']:
-                print(point.ppns[0], point.ppns[1], point.ppns[2], point.track_score, point.track_id)
-            print(' --------- ')
-            print(' === PPN track points: ', self.output['PPN_track_points'])
             self.output['matches'], self.output['vertices'] = self.matcher.find_matches(self.output['showers'],\
                                                                                         self.output['segment'],\
                                                                                         self.cfg['modules']['shower_match']['method'],\
@@ -1303,7 +1297,8 @@ class Pi0Chain():
             points = energy[shower_mask][s.voxels]
             graph_data += scatter_points(points,markersize=2,color=color)
             #graph_data[-1].name = 'Reco shower %d (n_edeps=%d, edep=%.2f, L_e=%.3f, L_p=%.3f, dir=[%.2f,%.2f,%.2f])' % (i,len(s.voxels),s.energy,s.L_e,s.L_p,s.direction[0],s.direction[1],s.direction[2])
-            graph_data[-1].name = 'Reco shower %d (edep: %.2f, dir: %.1f %.1f %.1f)' %(i,s.energy,s.direction[0],s.direction[1],s.direction[2])
+            #graph_data[-1].name = 'Reco shower %d (edep: %.2f, dir: %.1f %.1f %.1f)' %(i,s.energy,s.direction[0],s.direction[1],s.direction[2])
+            graph_data[-1].name = 'Reco shower %d (edep: %.2f, L_e=%.3f, L_p=%.3f)' %(i,s.energy,s.L_e,s.L_p)
         
         if len(self.output['showers'])>0:
             points = np.array([s.start for s in self.output['showers']])
@@ -1317,7 +1312,7 @@ class Pi0Chain():
                              u=-dirs[:,0], v=-dirs[:,1], w=-dirs[:,2],
                              sizemode='absolute', sizeref=1.0, anchor='tip',
                              showscale=False, opacity=0.4)
-            #graph_data.append(arrows)
+            graph_data.append(arrows)
         #'''
         
         
@@ -1327,7 +1322,9 @@ class Pi0Chain():
         if len(self.true_info['gamma_pos'])>0:
             true_pi0_decays = self.true_info['gamma_pos']
             graph_data += scatter_points(numpy.asarray(true_pi0_decays),markersize=5, color='green')
-            graph_data[-1].name = 'True pi0 decay vertices'
+            for ind, vtx in enumerate(self.true_info['gamma_pos']):
+                if ind%2 == 0:
+                    graph_data[-1].name = 'True pi0 decay vertices (%.2f, %.2f, %.2f)' %(vtx[0],vtx[1],vtx[2])
         #'''
             
         # Add reconstructed pi0 decay points
@@ -1393,10 +1390,16 @@ class Pi0Chain():
             points = np.array([i.ppns for i in self.output['PPN_track_points']])
             graph_data += scatter_points(points,markersize=4,color='magenta')
             graph_data[-1].name = 'PPN track points'
+            #print(' PPN track points: ')
+            #for i, point in enumerate(self.output['PPN_track_points']):
+            #    print(' coord: ', point.ppns, ' \t track score: ', point.track_score, ' \t track id: ', point.track_id)
         if self.output['PPN_shower_points']:
             points = np.array([i.ppns for i in self.output['PPN_shower_points']])
             graph_data += scatter_points(points,markersize=4,color='purple')
             graph_data[-1].name = 'PPN shower points'
+            #print(' PPN shower points: ')
+            #for i, point in enumerate(self.output['PPN_shower_points']):
+            #    print(' coord: ', point.ppns, ' \t shower score: ', point.shower_score, ' \t track id: ', point.shower_id)
         '''
         if self.output['PPN_michel_points']:
             points = np.array([i.ppns for i in self.output['PPN_michel_points']])
@@ -1414,7 +1417,7 @@ class Pi0Chain():
 
         # Add true photon's directions (based on true pi0 decay vertex and true photon's 1st steps)
         # ------------------------------------
-        #'''
+        '''
         if 'gamma_pos' in self.true_info and 'gamma_first_step' in self.true_info:
             for i, true_dir in enumerate(self.true_info['gamma_pos']):
                 vertex = self.true_info['gamma_pos'][i]
@@ -1426,7 +1429,7 @@ class Pi0Chain():
                 #                         self.true_info['gamma_first_step'][i][0],self.true_info['gamma_first_step'][i][1],self.true_info['gamma_first_step'][i][2])
                 graph_data[-1].name = 'True photon %i vtx -> 1st step' %i
                 graph_data[-1].mode = 'lines,markers'
-        #'''
+        '''
         
         # Add true photon's directions (based on true pi0 decay vertex and true photon's 1st (in time) edep)
         # ------------------------------------
