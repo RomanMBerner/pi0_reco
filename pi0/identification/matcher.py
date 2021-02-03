@@ -57,7 +57,7 @@ class Pi0Matcher():
             
             # For all showers: Find pair-wise CPAs and closest distance of a shower's direction to the CPAs
             energy_threshold        = 15. # minimum energy [MeV] needed for showers to be taken into account in the search for pair-wise CPAs
-            tolerance_CPA_to_shower = 30. # defines the max. dist. allowed of a CPA to the closest point on the shower's direction axis
+            tolerance_CPA_to_shower = 15. # defines the max. dist. allowed of a CPA to the closest point on the shower's direction axis
             CPAs = self.find_pair_wise_CPAs(np.array(sh_energies),\
                                             np.array(sh_starts),\
                                             np.array(sh_directions),\
@@ -102,7 +102,8 @@ class Pi0Matcher():
                 return matches, vertices
             
             # Veto showers which have a track-labeled PPN point close (< min_distance) to reco shower start (reject electrons/positrons)
-            min_distance = 0 # reject showers starting close (< min_distance) to a vertex candidate (likely to be electron/positron induced showers)
+            min_distance = 3. # reject showers starting close (< min_distance) to a vertex candidate (likely to be electron/positron induced showers)
+                              # Note: The matching purity is rather sensitive to this parameter
             ppn_candidates = self.reject_electronic_showers(np.array(sh_starts), ppn_candidates, min_distance)
             # TODO: Maybe also consider: If > NUMBER track-labeled edeps are within RADIUS around shower_start: Reject?
             # Note: Sometimes, semantic segmentation makes mistake at the very beginning of a shower...
@@ -110,10 +111,10 @@ class Pi0Matcher():
 
             # Find showers with a direction approximatively (shower_start - vertex_candidate), 
             # reject showers starting too close (< min_distance) to a vertex candidate (e.g. from electrons)
-            spatial_tolerance = 20. # if a sh_start's distance to a vertex_candidate is < spatial_tolerance : take the candidate as sh_start
+            spatial_tolerance = 5. # if a sh_start's distance to a vertex_candidate is < spatial_tolerance : take the candidate as sh_start
                                     # TODO: Read from config file?
                                     # TODO: Optimise this value (it's probably too small)
-            angular_tolerance = 20. # defines the maximum allowed difference between sh_direction and (sh_start-vertex_candidate) [in degrees]
+            angular_tolerance = 30. # defines the maximum allowed difference between sh_direction and (sh_start-vertex_candidate) [in degrees]
                                     # TODO: Read from config file?
                                     # TODO: Optimise this value (it's probably too small)
         
@@ -121,6 +122,7 @@ class Pi0Matcher():
             vertex_candidates, angle_matrix = self.find_vertex_candidates(np.array(sh_starts),\
                                                                           np.array(sh_directions),\
                                                                           ppn_candidates,\
+                                                                          spatial_tolerance,\
                                                                           angular_tolerance)
             #print(' vertex_candidates: ', vertex_candidates)
             #print(' angle_matrix: ', angle_matrix)
@@ -130,7 +132,7 @@ class Pi0Matcher():
                                 # in order to be accepted as a match
                                 # TODO: Read from config file?
                                 # TODO: Optimise this value (it's probably too large)
-            matches, vertices = self.find_photon_pairs(vertex_candidates, angle_matrix, max_angle_sum)
+            matches, vertices = self.find_photon_pairs(vertex_candidates, np.array(sh_starts), angle_matrix, max_angle_sum)
             #print(' matches: ', matches)
             #print(' vertices: ', vertices)
 
@@ -303,7 +305,8 @@ class Pi0Matcher():
 
                 # Get the (cos of the) angle between the direction vectors
                 angle = np.dot(dir_P1,dir_P2) / np.linalg.norm(dir_P1)/np.linalg.norm(dir_P2)
-                #print(' angle [deg]:          ', np.arccos(angle)*180/np.pi)
+                #if self.verbose:
+                #    print(' angle [deg]:          ', np.arccos(angle)*180/np.pi)
                 
                 # Check for parallel lines or angles which do not make sense (CPA would be undefined)
                 if abs(angle) == 1 or abs(angle) > 1.:
@@ -334,22 +337,25 @@ class Pi0Matcher():
                 #print(' p2: ', p2)
 
                 CPA = (np.array(p2) + np.array(p1)) / 2.
-                #print(' CPA: ', CPA)
+                if self.verbose:
+                    print(' CPA: ', CPA)
 
                 # Shortest distance between the two shower's direction lines
                 dist_between_lines = np.linalg.norm( np.dot(vec_P2_P1,M)) / (np.sqrt(m2))
-                #print(' dist_between_lines: ', dist_between_lines)
+                if self.verbose:
+                    print(' dist_between_lines: ', dist_between_lines)
 
                 # Distance from closest point on line to CPA
                 dist_to_CPA = np.linalg.norm( np.dot(vec_P2_P1,M)) / (np.sqrt(m2)) / 2.
-                #print(' dist_to_CPA: ', dist_to_CPA)
+                if self.verbose:
+                    print(' dist_to_CPA: ', dist_to_CPA)
 
-                if dist_between_lines < tolerance_CPA_to_shower:
+                if dist_to_CPA < tolerance_CPA_to_shower:
                     CPAs[i,j] = CPA
                 else:
                     CPAs[i,j] = np.array([-float('inf'),-float('inf'),-float('inf')])
-        #if self.verbose:  
-            #print(' CPAs: ', CPAs)
+        if self.verbose:  
+            print(' CPAs: ', CPAs)
         return np.array(CPAs)
 
     
@@ -365,7 +371,7 @@ class Pi0Matcher():
         '''
         if self.verbose:
             print(' ------- in function find_PPNs_close_to_CPAs -------')
-            #print(' CPAs:                 ', CPAs)
+            print(' CPAs:                 ', CPAs)
             print(' ppns:                 ', ppns)
             print(' tolerance_CPA_to_PPN: ', tolerance_CPA_to_PPN)
 
@@ -394,6 +400,9 @@ class Pi0Matcher():
                         if dist < tolerance_CPA_to_PPN:
                             accepted_PPNs.append(ppn)
                             #print(' Accepted PPN: ', ppn)
+                        else:
+                            if self.verbose:
+                                print(' Reject PPN point since it has a distance of', dist, 'px to the CPA.')
 
                     ppn_candidates[i,j] = accepted_PPNs
         if self.verbose:
@@ -435,13 +444,14 @@ class Pi0Matcher():
         return ppn_candidates
 
     
-    def find_vertex_candidates(self, sh_starts, sh_directions, ppn_candidates, angular_tolerance):
+    def find_vertex_candidates(self, sh_starts, sh_directions, ppn_candidates, spatial_tolerance, angular_tolerance):
         '''
         Finds vertex_candidates = track-labeled PPN points (close to the CPA)
         Inputs:
             - sh_starts (M x 3): array of shower start points
             - sh_directions (M x 3): array of shower directions
             - ppn_candidates (M x M): matrix where the elements are lists of np.arrays of PPN points (possible vertex candidates)
+            - spatial_tolerance: defines the maximum allowed distance between a vtx candidate and one of the shower's starts in order to be accepted as vtx candidate
             - angular_tolerance: defines the maximum allowed difference between sh_direction and (sh_start-vertex_candidate) [in degrees]
         Returns:
             - (M,M)-matrix where each elements is an np.array of the 3D vertex position
@@ -452,6 +462,7 @@ class Pi0Matcher():
             print(' sh_starts:           ', sh_starts)
             print(' sh_directions:       ', sh_directions)
             print(' ppn_candidates:      ', ppn_candidates)
+            print(' spatial_tolerance:   ', spatial_tolerance)
             print(' angular_tolerance:   ', angular_tolerance)
        
         # Get matrix with angular agreements
@@ -487,10 +498,11 @@ class Pi0Matcher():
                 if len(ppn_candidates[shower_1][shower_2]) > 0:
                     agreement = []
                     for vtx_cand in ppn_candidates[shower_1][shower_2]:
-                        
-                        # Obtain angle [degrees] between sh_direction and sh_start-vtx_candidate_position
-                        if abs(np.linalg.norm(sh_directions[shower_1])*np.linalg.norm(sh_starts[shower_1]-vtx_cand)) > 0. and \
-                           abs(np.linalg.norm(sh_directions[shower_2])*np.linalg.norm(sh_starts[shower_2]-vtx_cand)) > 0.:
+                        # Obtain angle [degrees] between sh_direction and sh_start-vtx_candidate_position (if start and vtx are more than spatial_tolerance px apart!)
+                        if np.linalg.norm(sh_starts[shower_1]-vtx_cand) >= spatial_tolerance and \
+                           np.linalg.norm(sh_starts[shower_2]-vtx_cand) >= spatial_tolerance:# and \
+                           #abs(np.linalg.norm(sh_directions[shower_1])*np.linalg.norm(sh_starts[shower_1]-vtx_cand)) > 0. and \
+                           #abs(np.linalg.norm(sh_directions[shower_2])*np.linalg.norm(sh_starts[shower_2]-vtx_cand)) > 0.:
                             angle_1 = np.arccos(np.dot(sh_directions[shower_1],sh_starts[shower_1]-vtx_cand)\
                                                /(np.linalg.norm(sh_directions[shower_1])*np.linalg.norm(sh_starts[shower_1]-vtx_cand)))*180./(np.pi)
                             angle_2 = np.arccos(np.dot(sh_directions[shower_2],sh_starts[shower_2]-vtx_cand)\
@@ -498,6 +510,10 @@ class Pi0Matcher():
                         else:
                             angle_1 = 0.
                             angle_2 = 0.
+                        if self.verbose:
+                            print('vtx_cand:        ', vtx_cand)
+                            print('angle_1:         ', angle_1)
+                            print('angle_2:         ', angle_2)
                         # Reject if one of the angles is larger than the angular_tolerance
                         if angle_1>angular_tolerance or angle_2>angular_tolerance:
                             #print(' INFO: angle_1', angle_1, '>', angular_tolerance, '(shower', shower_1,\
@@ -538,14 +554,18 @@ class Pi0Matcher():
                     vertex_candidates[i][j] = []
                     angle_matrix[i][j] = []
 
+        if self.verbose:
+            print(' vertex_candidates: ', vertex_candidates)
+            print(' angle_matrix:      ', angle_matrix)
         return vertex_candidates, angle_matrix
 
 
-    def find_photon_pairs(self, vertex_candidates, angle_matrix, max_angle_sum):
+    def find_photon_pairs(self, vertex_candidates, sh_starts, angle_matrix, max_angle_sum):
         '''
         Finds matches (= pairs of showers originated from the same vertex)
         Inputs:
             - vertex_candidates (M x 3): array of vertex candidates positions, M = number of vertex candidates, 3 = x,y,z coordinates
+            - sh_starts (M x 3): array of shower start points
             - angle_matrix: (M x M)-matrix where each elements is pair corresponding to the angular agreement of the
               corresponding shower-pair directions and the vertex candidate
             - max_angle_sum: float, defining the max. allowed sum of both angle-differences in order to be accepted as a match
@@ -555,7 +575,9 @@ class Pi0Matcher():
         if self.verbose:
             print(' ------- in function find_photon_pairs -------')
             print(' vertex_candidates: ', vertex_candidates)
+            print(' sh_starts:         ', sh_starts)
             print(' angle_matrix:      ', angle_matrix)
+            print(' max_angle_sum:     ', max_angle_sum)
         
         angle_sum_matrix = np.full((np.shape(angle_matrix)[0],np.shape(angle_matrix)[1]), float('inf'))
         
@@ -574,8 +596,14 @@ class Pi0Matcher():
         # Select smallest value from angle_sum_matrix and make all entries (rows and columns) of used
         # showers to float('inf') in order to not use the matched showers again
         for i in range(min(angle_sum_matrix.shape)):
+            
+            # If smallest value in angle_sum_matrix < max_angle_sum: Accept this vtx candidate
             if angle_sum_matrix.min() < max_angle_sum:
                 indices = np.argwhere(angle_sum_matrix.min() == angle_sum_matrix)
+                if self.verbose:
+                    print(' indices:  ', indices)
+                    print(' vtx cand: ', vertex_candidates[indices[0][0]][indices[0][1]])
+                #indices = np.argwhere(angle_sum_matrix.min() == angle_sum_matrix)
                 matches.append([indices[0][0],indices[0][1]])
                 pi0_vertices.append(vertex_candidates[indices[0][0]][indices[0][1]])
                 #print(' indices: ', indices)
@@ -585,6 +613,27 @@ class Pi0Matcher():
                 angle_sum_matrix[:,indices[0][0]] = float('inf')
                 angle_sum_matrix[indices[0][1],:] = float('inf')
                 angle_sum_matrix[:,indices[0][1]] = float('inf')
+            '''
+            # If smallest value in angle_sum_matrix >= max_angle_sum: Accept the vtx candidate if one of the showers start close (<10 px away) from the vtx candidate.
+            else:
+                if angle_sum_matrix.min() != float('inf'):
+                    indices = np.argwhere(angle_sum_matrix.min() == angle_sum_matrix)
+                    if self.verbose:
+                        print(' === indices:  ', indices)
+                        print(' === vtx cand: ', vertex_candidates[indices[0][0]][indices[0][1]])
+                    if np.linalg.norm(np.array(vertex_candidates[indices[0][0]][indices[0][1]])-np.array(sh_starts[indices[0][0]])) < 10. or\
+                       np.linalg.norm(np.array(vertex_candidates[indices[0][0]][indices[0][1]])-np.array(sh_starts[indices[0][1]])) < 10.:
+                        matches.append([indices[0][0],indices[0][1]])
+                        pi0_vertices.append(vertex_candidates[indices[0][0]][indices[0][1]])
+                        #print(' indices: ', indices)
+                        #print(' matches: ', matches)
+                        #print(' pi0_vertices: ', pi0_vertices)
+                        angle_sum_matrix[indices[0][0],:] = float('inf')
+                        angle_sum_matrix[:,indices[0][0]] = float('inf')
+                        angle_sum_matrix[indices[0][1],:] = float('inf')
+                        angle_sum_matrix[:,indices[0][1]] = float('inf')
+            '''
+
         if self.verbose:
             print(' matches:      ', matches)
             print(' pi0_vertices: ', pi0_vertices)
