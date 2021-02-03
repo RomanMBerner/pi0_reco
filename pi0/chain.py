@@ -25,8 +25,8 @@ class Pi0Chain():
 
     #Class constants
     IDX_SEMANTIC_ID = -1
-    IDX_CLUSTER_ID = 6 # Old: IDX_GROUP_ID    = -2
-    IDX_CLUSTER_ID = 5 # Old: IDX_CLUSTER_ID  = -3
+    IDX_GROUP_ID    = 6 # Old: IDX_GROUP_ID    = -2
+    IDX_CLUSTER_ID  = 5 # Old: IDX_CLUSTER_ID  = -3
     
 
     def __init__(self, io_cfg, chain_cfg, verbose=False):
