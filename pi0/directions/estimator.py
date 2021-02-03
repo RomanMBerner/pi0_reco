@@ -3,162 +3,114 @@ from sklearn.cluster import DBSCAN
 from sklearn.decomposition import PCA
 from scipy.spatial.distance import cdist
 
-# Drop clusters with size < 30
-# Return default vector if found no clusters
-
-
-class FragmentEstimator:
-
-    def __init__(self, eps=6.0, min_samples=5):
-
-        self._clusterer = DBSCAN(eps=eps, min_samples=min_samples)
-
-
-    def make_shower_frags(self, shower_energy):
-        """
-        Cluster showers for initial identification of shower stem using DBSCAN.
-
-        NOTE: Batch size should be one.
-
-        Inputs:
-            - shower_energy (N x 5 array): energy deposition array where
-            the first three coordinates give the spatial indices and the last
-            column gives the energy depositions.
-
-        Returns:
-            - frag_labels: labels assigned by DBSCAN clustering.
-            - mask: energy thresholding mask.
-        """
-        coords = shower_energy[:, :3]
-        frag_labels = self._clusterer.fit_predict(coords)
-        return frag_labels
-
-
-    def find_cluster_indices(self, coords, labels, frags):
-        """
-        Find the index labels for each fragment assigned to a primary.
-
-        Inputs:
-            - coords (N x 3): spatial coordinate array
-            - labels (N x 1): fragment labels
-            - frags: the fragment label associated to the ith em primary.
-
-        Returns:
-            - clusts (list of arrays): list of variable length arrays where
-            the ith array contains the index location of the fragment assigned to
-            the ith primary.
-        """
-        centroids = []
-        clusts = []
-        for c in frags:
-            if c == -1: continue
-            ind = np.where(labels == c)[0]
-            clusts.append(ind)
-        return clusts
-
-
-    def assign_frags_to_primary(self, shower_energy, primaries):
-        """
-        Inputs:
-            - shower_energy (np.ndarray): energy depo array for SHOWERS ONLY
-            - primaries (np.ndarray): primaries information from parse_em_primaries
-            - max_distance (float): do not include voxels in fragments if distance from
-            primary is larger than max_distance.
-
-        Returns:
-            None (updates FragmentEstimator properties in-place)
-        """
-        labels = self.make_shower_frags(shower_energy)
-        coords = shower_energy[:, :3]
-        self._coords = coords
-        Y = cdist(coords, primaries[:, :3])
-        min_dists, ind = np.min(Y, axis=1), np.argmin(Y, axis=0)
-        frags = labels[ind]
-        clusts = self.find_cluster_indices(coords, labels, frags)
-        self._clusts = clusts
-        return clusts
-
-    def set_labels(self):
-        labels = -np.ones((self.coords.shape[0], ))
-        for i, ind in  enumerate(self.clusts):
-            labels[ind] = i
-        self._labels = labels
-
-    @property
-    def coords(self):
-        return self._coords
-
-    @property
-    def labels(self):
-        return self._labels
-
-    @property
-    def clusts(self):
-        return self._clusts
-
-    @property
-    def primaries(self):
-        return self._primaries
-
-    @property
-    def voxel_weights(self):
-        return self._voxel_weights
-
-
 class DirectionEstimator():
 
-    def __init__(self):
-        self._directions = None
-
-    def get_directions(self, primaries, fragments,
-                       max_distance=float(10), mode='pca', normalize=True, weighted=True): # max_distance=float('inf'), weighted=False
+    def __init__(self, mode='cent', max_distance=-1, optimize=False, normalize=True, weighted=False):
         """
-        Given data (see FragmentEstimator docstring), return estimated
-        unit direction vectors for each primary.
+        Initilize the estimator parameters
+        - mode: method for estimating direction, choose 'pca' or 'cent'
+        - max_distance: maximum distance cut for primary fragment
+        - optimize: optimize the neighborhood size
+        - normalize: True returns unit direction vectors.
+        - weighted: If True, computes the weighted centroid.
+        """
+        self._directions   = None
+        self._mode         = mode
+        self._max_distance = max_distance
+        self._optimize     = optimize
+        self._normalize    = normalize
+        self._weighted     = weighted
+        modes              = ['cent', 'pca']
+        assert mode in modes, f'Direction estimation mode {mode} not recognized, must be one of {modes}'
+
+    def get_directions(self, primaries, fragments):
+        """
+        Return estimated unit direction vectors for each primary.
 
         Inputs:
             - primaries (np.ndarray): N x 3 em primary coordinates
             - fragments (list of np.ndarray): fragments[i] is (N,3+M+1) shower energy depositions (x,y,z,...,E)
             indices for the i-th primary.
-            - max_distance: maximum distance cut for primary fragment
-            - mode: method for estimating direction, choose 'pca' or 'cent'
-            - normalize: True returns unit direction vectors.
-            - weighted: If True, computes the weighted centroid.
         """
+        # Loop over start points
         directions = []
         for i, p in enumerate(primaries[:, :3]):
+
             origin = p[:3]
             coords = fragments[i][:,:3]
-            if max_distance < float('inf'):
+
+            # If a maximum distance from the fragment origin is specified, down select points
+            if not self._optimize and self._max_distance > 0:
                 minid = np.argmin(cdist(coords, [origin]).flatten())
                 dists = cdist(coords, [coords[minid]]).flatten()
-                dist_mask = np.where(dists < max_distance)[0]
+                dist_mask = np.where(dists < self._max_distance)[0]
                 coords = coords[dist_mask]
-            if mode == 'pca':
+
+            # If optimization is required, find neighborhood that minimizes relative transverse spread
+            elif self._optimize:
+                # Order the cluster points by increasing distance to the start point
+                minid = np.argmin(cdist(coords, [origin]).flatten())
+                dist_mat = cdist(coords, [coords[minid]]).flatten()
+                order = np.argsort(dist_mat)
+                coords = coords[order]
+                dist_mat = dist_mat[order]
+
+                # Find the PCA relative secondary spread for each point
+                labels = np.zeros(len(coords))
+                meank = np.mean(coords[:3], axis=0)
+                covk = (coords[:3]-meank).T.dot(coords[:3]-meank)/3
+                for i in range(2, len(coords)):
+                    # Get the eigenvalues and eigenvectors, identify point of minimum secondary spread
+                    w, _ = np.linalg.eigh(covk)
+                    labels[i] = np.sqrt(w[2]/(w[0]+w[1])) if (w[0]+w[1]) else 0.
+                    if dist_mat[i] == dist_mat[i-1]:
+                        labels[i-1] = 0.
+
+                    # Increment mean and matrix
+                    if i != len(coords)-1:
+                        meank = ((i+1)*meank+coords[i+1])/(i+2)
+                        covk = (i+1)*covk/(i+2) + (coords[i+1]-meank).reshape(-1,1)*(coords[i+1]-meank)/(i+1)
+
+                # Subselect coords that are most track-like
+                max_id = np.argmax(labels)
+                coords = coords[:max_id+1]
+
+            # If PCA is required, return the principal component
+            if self._mode == 'pca':
                 direction = self.pca_estimate(coords)
                 parity = self.compute_parity_flip(coords, direction, origin)
                 direction *= parity
-            elif mode == 'cent':
+
+            # If centroid is required, return the mean distance wrt to the start point
+            elif self._mode == 'cent':
                 weights = None
-                if weighted:
+                if self._weighted:
                     weights = fragments[:, -1]
                 direction = self.centroid_estimate(coords, origin, weights)
-            else:
-                raise ValueError('Invalid Direction Estimation Mode')
+
             directions.append(direction)
+
+        # Normalize direction to norm 1 if requested
         directions = np.asarray(directions)
-        if normalize:
+        if self._normalize:
             directions = directions / np.linalg.norm(directions, axis=1).reshape(
                 directions.shape[0], 1)
         self._directions = directions
+
         return directions
 
     def centroid_estimate(self, coords, primary, weights=None):
+        '''
+        Computes the voxel neighborhood centroid and its displacement from the start point
+        '''
         centroid = np.average(coords, axis=0, weights=weights)
         direction = centroid - primary
         return direction
 
     def pca_estimate(self, coords):
+        '''
+        Computes the principal axis of the neighborhood around the start point
+        '''
         fit = PCA(n_components=1).fit(coords)
         return fit.components_.squeeze(0)
 
