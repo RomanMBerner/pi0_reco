@@ -2,6 +2,29 @@ import math
 import numpy as np
 
 
+# Class that contains all the reco shower information
+class Shower():
+    def __init__(self, start=-np.ones(3), direction=-np.ones(3), voxels=[], energy=-1., pid=-1, shower_group_pred=-1, L_e=-1., L_p=-1.):
+        self.start             = start
+        self.direction         = direction
+        self.voxels            = voxels
+        self.energy            = energy
+        self.pid               = int(pid)
+        self.shower_group_pred = int(shower_group_pred)
+        self.L_e               = L_e # electron (positron) likelihood fraction
+        self.L_p               = L_p # photon likelihood fraction
+        
+    def __str__(self):
+        return """
+        Shower ID       : {}
+        Start point     : ({:0.2f},{:0.2f},{:0.2f})
+        Direction       : ({:0.2f},{:0.2f},{:0.2f})
+        Voxel count     : {}
+        Energy          : {}
+        Shower_group_pred : {}
+        """.format(self.pid, *self.start, *self.direction, len(self.voxels), self.energy, self.shower_group_pred)
+
+    
 class ElectronShower(): # Including positron induced showers
     def __init__(self,
                  pid=-1,
@@ -766,3 +789,52 @@ class Analyser():
             self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
             self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
         return
+
+    
+# Classes that contain the PPN predicted points (one class for every semantic type)
+# TODO: Instead of having 5 classes for every semantic type, make one class 'PPN_Predictions' with all shower, track, michel, delta, LEScatter predictions
+class ShowerPoints():
+    def __init__(self, ppns=-np.ones(3), shower_score=-1., shower_id=-1):
+        self.ppns = ppns
+        self.shower_score = shower_score
+        self.shower_id = int(shower_id)
+    def __str__(self):
+        return """ Track  ID {}
+        PPN point  : ({:0.2f},{:0.2f},{:0.2f})
+        Shower score: {}""".format(self.shower_id, *self.ppns, self.shower_score)
+class TrackPoints():
+    def __init__(self, ppns=-np.ones(3), track_score=-1., track_id=-1):
+        self.ppns = ppns
+        self.track_score = track_score
+        self.track_id = int(track_id)
+    def __str__(self):
+        return """ Track  ID {}
+        PPN point  : ({:0.2f},{:0.2f},{:0.2f})
+        Track score: {}""".format(self.track_id, *self.ppns, self.track_score)
+class MichelPoints():
+    def __init__(self, ppns=-np.ones(3), michel_score=-1., michel_id=-1):
+        self.ppns = ppns
+        self.michel_score = michel_score
+        self.michel_id = int(michel_id)
+    def __str__(self):
+        return """ Track  ID {}
+        PPN point  : ({:0.2f},{:0.2f},{:0.2f})
+        Michel score: {}""".format(self.michel_id, *self.ppns, self.michel_score)
+class DeltaPoints():
+    def __init__(self, ppns=-np.ones(3), delta_score=-1., delta_id=-1):
+        self.ppns = ppns
+        self.delta_score = delta_score
+        self.delta_id = int(delta_id)
+    def __str__(self):
+        return """ Track  ID {}
+        PPN point  : ({:0.2f},{:0.2f},{:0.2f})
+        Delta score: {}""".format(self.delta_id, *self.ppns, self.delta_score)
+class LEScatPoints():
+    def __init__(self, ppns=-np.ones(3), LEScat_score=-1., LEScat_id=-1):
+        self.ppns = ppns
+        self.LEScat_score = LEScat_score
+        self.LEScat_id = int(LEScat_id)
+    def __str__(self):
+        return """ Track  ID {}
+        PPN point  : ({:0.2f},{:0.2f},{:0.2f})
+        LEScat score: {}""".format(self.LEScat_id, *self.ppns, self.LEScat_score)
