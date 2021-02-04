@@ -163,14 +163,27 @@ class Analyser():
 
     def record(self, event, output, fiducial=0):
         self.extract_true_information(event, fiducial)
+        self.extract_reco_information(event, output, fiducial)
         self.find_true_electron_showers(event, output)
         self.find_true_photon_showers(event, output)
-        self.extract_reco_information(event, output)
 
     def initialize_true(self):
-        self.true_info = {}
+        return
 
-        self.true_info['ev_id']                          = -1 # [-]
+
+    def initialize_reco(self):
+        return
+
+
+    def extract_true_information(self, event, fiducial):
+        '''
+        Obtain true informations about pi0s and gammas originated from pi0 decays and dump
+        it to self.true_info['<variable>']
+        '''
+
+        #self.true_info = {}
+        
+        self.true_info['ev_id']                          = event['index'] # [-]
         self.true_info['n_pi0']                          = 0  # [-]
         self.true_info['n_gammas']                       = 0  # [-]
         self.true_info['pi0_track_ids']                  = [] # [-]
@@ -197,41 +210,7 @@ class Analyser():
         self.true_info['primaries_pdg_code']             = [] # [-]      # PDG codes of primary particles
         self.true_info['primaries_einit']                = [] # [MeV]    # initial energy of primary particles
         self.true_info['primaries_mom']                  = [] # [MeV/c]  # initial three momentum of primary particles
-        return
-
-
-    def initialize_reco(self):
-        self.reco_info = {}
-
-        self.reco_info['ev_id']                          = -1 # [-]
-        self.reco_info['n_pi0']                          = 0  # [-]
-        self.reco_info['n_gammas']                       = 0  # [-]
-        self.reco_info['matches']                        = [] # [-]      # pairs of gamma indices for reconstructed pi0s
-        self.reco_info['gamma_mom']                      = [] # [MeV/c]
-        self.reco_info['gamma_dir']                      = [] # [x,y,z]
-        self.reco_info['gamma_start']                    = [] # [x,y,z]  # pi0 -> gamma+gamma vertex
-        self.reco_info['gamma_edep']                     = [] # [MeV]
-        self.reco_info['gamma_pid']                      = [] # [-]
-        self.reco_info['gamma_voxels_mask']              = [] # [-]
-        self.reco_info['gamma_n_voxels_mask']            = [] # [-]
-        self.reco_info['gamma_voxels']                   = [] # [-]
-        self.reco_info['gamma_n_voxels']                 = [] # [-]
-        self.reco_info['gamma_angle']                    = [] # [rad]    # Opening angle between the two photons from a reco pi0 decay
-        self.reco_info['pi0_mass']                       = [] # [MeV/c2] # Reconstructed mass of the reco pi0
-        self.reco_info['OOFV']                           = [] # [-]      # If shower has >0 edep(s) close to the LAr volume boundary.
-                                                                         # Note: If photon leaves detector without producing an edep, this is NOT classified as OOFV.
-                                                                         # For those events: Consider self.true_info['n_voxels']
-        return
-
-
-    def extract_true_information(self, event, fiducial):
-        '''
-        Obtain true informations about pi0s and gammas originated from pi0 decays and dump
-        it to self.true_info['<variable>']
-        '''
-
-        #print(' self.true_info[ev_id]: ', self.true_info['ev_id'])
-        self.true_info['ev_id'] = event['index']
+        
 
         # Define some lists for pi0s, daughter photons and their compton electrons
         ids_of_true_photons           = [] # every photon has its own id
@@ -242,7 +221,7 @@ class Analyser():
         
         # Get primary particles:
         # Primary pi0s are not in here...
-        for i, p in enumerate(self.event['particles'][0]):
+        for i, p in enumerate(event['particles']):
             #print(p.dump())
             if p.parent_pdg_code() == 0:
                 self.true_info['primaries_pdg_code'].append(p.pdg_code())
@@ -387,81 +366,103 @@ class Analyser():
                     self.true_info['OOFV'].append(shower_index)
                     break
         return
-
-
-    def extract_reco_information(self, event, output):
+    
+    
+    def extract_reco_information(self, event, output, fiducial):
         '''
         Obtain reconstructed informations about pi0s and gammas originated from pi0 decays and dump
         it to self.reco_info['<variable>']
         '''
+        #self.reco_info = {}
 
-        self.reco_info['ev_id']    = event['index']
-        self.reco_info['n_pi0']    = len(output['matches'])
-        self.reco_info['n_gammas'] = 2.*len(output['matches'])
-        self.reco_info['OOFV']     = output['OOFV']
-
-        print(' ============ n reco pi0: ', self.reco_info['n_pi0'])
-
-        showers = output['showers']
-
+        self.reco_info['ev_id']                          = event['index'] # [-]
+        self.reco_info['showers']                        = [] # [-]      #Reconstruted showers
+        self.reco_info['n_pi0']                          = 0  # [-]
+        self.reco_info['n_gammas']                       = 0  # [-]
+        self.reco_info['matches']                        = [] # [-]      # pairs of gamma indices for reconstructed pi0s
+        self.reco_info['gamma_mom']                      = [] # [MeV/c]
+        self.reco_info['gamma_dir']                      = [] # [x,y,z]
+        self.reco_info['gamma_start']                    = [] # [x,y,z]  # pi0 -> gamma+gamma vertex
+        self.reco_info['gamma_edep']                     = [] # [MeV]
+        self.reco_info['gamma_pid']                      = [] # [-]
+        self.reco_info['gamma_voxels_mask']              = [] # [-]
+        self.reco_info['gamma_n_voxels_mask']            = [] # [-]
+        self.reco_info['gamma_voxels']                   = [] # [-]
+        self.reco_info['gamma_n_voxels']                 = [] # [-]
+        self.reco_info['gamma_angle']                    = [] # [rad]    # Opening angle between the two photons from a reco pi0 decay
+        self.reco_info['pi0_mass']                       = [] # [MeV/c2] # Reconstructed mass of the reco pi0
+        self.reco_info['OOFV']                           = [] # [-]      # If shower has >0 edep(s) close to the LAr volume boundary.
+                                                                         # Note: If photon leaves detector without producing an edep, this is NOT classified as OOFV.
+                                                                         # For those events: Consider self.true_info['n_voxels']
+        
+        if 'OOFV' in output:
+            self.reco_info['OOFV']     = output['OOFV']
+        
+        if 'showers' in output:
+            self.reco_info['showers']  = output['showers']
+        
+        if 'matches' in output:
+            self.reco_info['matches']  = output['matches']
+            self.reco_info['n_pi0']    = len(output['matches'])
+            self.reco_info['n_gammas'] = 2.*len(output['matches'])
+        
         # Note: match = if two showers point to the same point and this point is close to a track
-        for match in range(self.reco_info['n_pi0']):
-            match_1 = output['matches'][match][0]
-            match_2 = output['matches'][match][1]
-            self.reco_info['matches'].append(match_1)
-            self.reco_info['matches'].append(match_2)
-            self.reco_info['gamma_mom'].append(np.array(showers[match_1].direction*showers[match_1].energy))
-            self.reco_info['gamma_mom'].append(np.array(showers[match_2].direction*showers[match_2].energy))
-            self.reco_info['gamma_dir'].append(np.array(showers[match_1].direction))
-            self.reco_info['gamma_dir'].append(np.array(showers[match_2].direction))
-            self.reco_info['gamma_start'].append(np.array(showers[match_1].start))
-            self.reco_info['gamma_start'].append(np.array(showers[match_2].start))
-            self.reco_info['gamma_edep'].append(showers[match_1].energy)
-            self.reco_info['gamma_edep'].append(showers[match_2].energy)
-            self.reco_info['gamma_pid'].append(showers[match_1].pid)
-            self.reco_info['gamma_pid'].append(showers[match_2].pid)
-            self.reco_info['gamma_voxels_mask'].append(np.array(showers[match_1].voxels))
-            self.reco_info['gamma_voxels_mask'].append(np.array(showers[match_2].voxels))
-            self.reco_info['gamma_n_voxels_mask'].append(showers[match_1].voxels.size)
-            self.reco_info['gamma_n_voxels_mask'].append(showers[match_2].voxels.size)
-
-            # Obtain the showers edeps (x,y,z,batch_id,energy_deposition)
-            mask = output['shower_mask']                           # mask for all edeps classified as shower
-            voxels_1 = output['showers'][match_1].voxels           # indices in the mask for the 1st match
-            voxels_2 = output['showers'][match_2].voxels           # indices in the mask for the 2nd match
-            edeps_1 = output['energy'][mask][voxels_1]             # all edeps for the 1st match
-            edeps_2 = output['energy'][mask][voxels_2]             # all edeps for the 2nd match
-            self.reco_info['gamma_voxels'].append(np.array(edeps_1))
-            self.reco_info['gamma_voxels'].append(np.array(edeps_2))
-            self.reco_info['gamma_n_voxels'].append(len(edeps_1))
-            self.reco_info['gamma_n_voxels'].append(len(edeps_2))
-
+        if 'showers' in output and 'matches' in output and 'energy' in output:
+            for ind, matches in enumerate(output['matches']):
+                #print(' 1: matches: ', matches)
+                match_1 = matches[0]
+                match_2 = matches[1]
+                self.reco_info['gamma_mom'].append(np.array(output['showers'][match_1].direction*output['showers'][match_1].energy))
+                self.reco_info['gamma_mom'].append(np.array(output['showers'][match_2].direction*output['showers'][match_2].energy))
+                self.reco_info['gamma_dir'].append(np.array(output['showers'][match_1].direction))
+                self.reco_info['gamma_dir'].append(np.array(output['showers'][match_2].direction))
+                self.reco_info['gamma_start'].append(np.array(output['showers'][match_1].start))
+                self.reco_info['gamma_start'].append(np.array(output['showers'][match_2].start))
+                self.reco_info['gamma_edep'].append(output['showers'][match_1].energy)
+                self.reco_info['gamma_edep'].append(output['showers'][match_2].energy)
+                self.reco_info['gamma_pid'].append(output['showers'][match_1].pid)
+                self.reco_info['gamma_pid'].append(output['showers'][match_2].pid)
+                self.reco_info['gamma_voxels_mask'].append(np.array(output['showers'][match_1].voxels))
+                self.reco_info['gamma_voxels_mask'].append(np.array(output['showers'][match_2].voxels))
+                self.reco_info['gamma_n_voxels_mask'].append(output['showers'][match_1].voxels.size)
+                self.reco_info['gamma_n_voxels_mask'].append(output['showers'][match_2].voxels.size)
+                voxels_1 = output['showers'][match_1].voxels # indices in the mask for the 1st match
+                voxels_2 = output['showers'][match_2].voxels # indices in the mask for the 2nd match
+                edeps_1 = output['energy'][voxels_1] # all edeps for the 1st match (x,y,z,batch_id,energy_deposition)
+                edeps_2 = output['energy'][voxels_2] # all edeps for the 2nd match (x,y,z,batch_id,energy_deposition)
+                self.reco_info['gamma_voxels'].append(np.array(edeps_1))
+                self.reco_info['gamma_voxels'].append(np.array(edeps_2))
+                self.reco_info['gamma_n_voxels'].append(len(edeps_1))
+                self.reco_info['gamma_n_voxels'].append(len(edeps_2))
+        
         # Reconstructed angle and pi0 mass
-        for match in output['matches']:
-            idx1, idx2 = match
-            s1, s2 = output['showers'][idx1], output['showers'][idx2]
-            e1, e2 = s1.energy, s2.energy
-            t1, t2 = s1.direction, s2.direction
-            #if np.any(np.isnan(t1)) or np.any(np.isnan(t2)):
-            #    print(' WARNING: shower direction not assigned: \t dir_1: ', t1, ' \t dir_2: ', t2)
-            #    print(' \t -> set costheta = 1 and pi0_mass = 0 ')
-            #    costheta = 1.
-            #else:
-            try:
-                costheta = np.dot(t1, t2)
-            except:
-                print(' WARNING: shower direction not assigned: \t dir_1: ', t1, ' \t dir_2: ', t2)
-                print(' \t -> set costheta = 1 and pi0_mass = 0 ')
-                costheta = 1.
+        if 'matches' in output:
+            for ind, matches in enumerate(output['matches']):
+                #print(' 1: matches: ', matches)
+                idx1, idx2 = matches
+                s1, s2 = output['showers'][idx1], output['showers'][idx2]
+                e1, e2 = s1.energy, s2.energy
+                t1, t2 = s1.direction, s2.direction
+                #if np.any(np.isnan(t1)) or np.any(np.isnan(t2)):
+                #    print(' WARNING: shower direction not assigned: \t dir_1: ', t1, ' \t dir_2: ', t2)
+                #    print(' \t -> set costheta = 1 and pi0_mass = 0 ')
+                #    costheta = 1.
+                #else:
+                try:
+                    costheta = np.dot(t1, t2)
+                except:
+                    print(' WARNING: shower direction not assigned: \t dir_1: ', t1, ' \t dir_2: ', t2)
+                    print(' \t -> set costheta = 1 and pi0_mass = 0 ')
+                    costheta = 1.
 
-            if abs(costheta) > 1.:
-                print(' WARNING: costheta = np.dot(sh1.dir, sh2.dir) = ', costheta, ' > 1.')
-                print(' \t -> set costheta = 1 and pi0_mass = 0 ')
-                costheta = 1
-            self.reco_info['gamma_angle'].append(np.arccos(costheta))
-            self.reco_info['gamma_angle'].append(np.arccos(costheta))
-            self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
-            self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
+                if abs(costheta) > 1.:
+                    print(' WARNING: costheta = np.dot(sh1.dir, sh2.dir) = ', costheta, ' > 1.')
+                    print(' \t -> set costheta = 1 and pi0_mass = 0 ')
+                    costheta = 1
+                self.reco_info['gamma_angle'].append(np.arccos(costheta))
+                self.reco_info['gamma_angle'].append(np.arccos(costheta))
+                self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
+                self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
         return
 
 
@@ -469,7 +470,6 @@ class Analyser():
         '''
         Obtain true information about showers induced by (primary) electrons and dump it to output['electronShowers'].
         '''
-        #print(' ---- in function find_true_electron_showers ---- ')
         electron_showers = []
 
         # Get group_id of shower produced by electron
@@ -713,91 +713,6 @@ class Analyser():
                     break
         output['comptonShowers'] = compton_showers
 
-        return
-
-
-    def extract_reco_information(self, event, output):
-        '''
-        Obtain reconstructed informations about pi0s and gammas originated from pi0 decays and dump
-        it to self.reco_info['<variable>']
-        '''
-
-        self.reco_info['ev_id']                  = event['index']              # [-]
-        self.reco_info['n_pi0']                  = len(output['matches'])      # [-]
-        self.reco_info['n_gammas']               = 2.*len(output['matches'])   # [-]
-        #self.reco_info['matches']                = []                               # [-]
-        #self.reco_info['gamma_mom']              = []                               # [MeV/c]
-        #self.reco_info['gamma_dir']              = []                               # [x,y,z]
-        #self.reco_info['gamma_start']            = []                               # [x,y,z] # pi0->2gamma vertex
-        #self.reco_info['gamma_edep']             = []                               # [MeV]
-        #self.reco_info['gamma_pid']              = []                               # [-]
-        #self.reco_info['gamma_voxels_mask']      = []                               # [-]
-        #self.reco_info['gamma_n_voxels_mask']    = []                               # [-]
-        #self.reco_info['gamma_voxels']           = []                               # [-]
-        #self.reco_info['gamma_n_voxels']         = []                               # [-]
-        #self.reco_info['gamma_angle']            = []                               # [rad]
-        #self.reco_info['pi0_mass']               = []                               # [MeV/c2]
-        self.reco_info['OOFV']                   = output['OOFV']              # [-]
-
-        showers = output['showers']
-
-        # Note: match = if two showers point to the same point and this point is close to a track
-        for match in range(self.reco_info['n_pi0']):
-            match_1 = output['matches'][match][0]
-            match_2 = output['matches'][match][1]
-            self.reco_info['matches'].append(match_1)
-            self.reco_info['matches'].append(match_2)
-            self.reco_info['gamma_mom'].append(np.array(showers[match_1].direction*showers[match_1].energy))
-            self.reco_info['gamma_mom'].append(np.array(showers[match_2].direction*showers[match_2].energy))
-            self.reco_info['gamma_dir'].append(np.array(showers[match_1].direction))
-            self.reco_info['gamma_dir'].append(np.array(showers[match_2].direction))
-            self.reco_info['gamma_start'].append(np.array(showers[match_1].start))
-            self.reco_info['gamma_start'].append(np.array(showers[match_2].start))
-            self.reco_info['gamma_edep'].append(showers[match_1].energy)
-            self.reco_info['gamma_edep'].append(showers[match_2].energy)
-            self.reco_info['gamma_pid'].append(showers[match_1].pid)
-            self.reco_info['gamma_pid'].append(showers[match_2].pid)
-            self.reco_info['gamma_voxels_mask'].append(np.array(showers[match_1].voxels))
-            self.reco_info['gamma_voxels_mask'].append(np.array(showers[match_2].voxels))
-            self.reco_info['gamma_n_voxels_mask'].append(showers[match_1].voxels.size)
-            self.reco_info['gamma_n_voxels_mask'].append(showers[match_2].voxels.size)
-
-            # Obtain the showers edeps (x,y,z,batch_id,energy_deposition)
-            voxels_1 = output['showers'][match_1].voxels           # indices in the mask for the 1st match
-            voxels_2 = output['showers'][match_2].voxels           # indices in the mask for the 2nd match
-            edeps_1 = output['energy'][voxels_1]             # all edeps for the 1st match
-            edeps_2 = output['energy'][voxels_2]             # all edeps for the 2nd match
-            self.reco_info['gamma_voxels'].append(np.array(edeps_1))
-            self.reco_info['gamma_voxels'].append(np.array(edeps_2))
-            self.reco_info['gamma_n_voxels'].append(len(edeps_1))
-            self.reco_info['gamma_n_voxels'].append(len(edeps_2))
-
-        # Reconstructed angle and pi0 mass
-        for match in output['matches']:
-            idx1, idx2 = match
-            s1, s2 = output['showers'][idx1], output['showers'][idx2]
-            e1, e2 = s1.energy, s2.energy
-            t1, t2 = s1.direction, s2.direction
-            #if np.any(np.isnan(t1)) or np.any(np.isnan(t2)):
-            #    print(' WARNING: shower direction not assigned: \t dir_1: ', t1, ' \t dir_2: ', t2)
-            #    print(' \t -> set costheta = 1 and pi0_mass = 0 ')
-            #    costheta = 1.
-            #else:
-            try:
-                costheta = np.dot(t1, t2)
-            except:
-                print(' WARNING: shower direction not assigned: \t dir_1: ', t1, ' \t dir_2: ', t2)
-                print(' \t -> set costheta = 1 and pi0_mass = 0 ')
-                costheta = 1.
-
-            if abs(costheta) > 1.:
-                print(' WARNING: costheta = np.dot(sh1.dir, sh2.dir) = ', costheta, ' > 1.')
-                print(' \t -> set costheta = 1 and pi0_mass = 0 ')
-                costheta = 1
-            self.reco_info['gamma_angle'].append(np.arccos(costheta))
-            self.reco_info['gamma_angle'].append(np.arccos(costheta))
-            self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
-            self.reco_info['pi0_mass'].append(math.sqrt(2.*e1*e2*(1.-costheta)))
         return
 
     

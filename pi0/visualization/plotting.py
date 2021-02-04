@@ -25,16 +25,16 @@ def layout(width=1024, height=768, xrange=(0,768), yrange=(0,768), zrange=(0,768
     return layout
 
 def draw_event(output, truth, **kwargs):
-
+    
     graph_data = []
-
+    
     # Draw voxels with cluster labels
     # ------------------------------------
     energy = output['energy']
     graph_data += scatter_points(energy,markersize=2,color=energy[:,-1],colorscale='Inferno')
     graph_data[-1].name = 'Energy'
-
-
+    
+    
     # Add points from true electronShowers
     # ------------------------------------
     '''
@@ -214,7 +214,7 @@ def draw_event(output, truth, **kwargs):
 
     # Add true photon's directions (based on true pi0 decay vertex and true photon's 1st steps)
     # ------------------------------------
-    #'''
+    '''
     if 'gamma_pos' in truth and 'gamma_first_step' in truth:
         for i, true_dir in enumerate(truth['gamma_pos']):
             vertex = truth['gamma_pos'][i]
@@ -224,11 +224,11 @@ def draw_event(output, truth, **kwargs):
             graph_data[-1].name = 'True photon %i vertex to first step (einit: %.2f, edep: %.2f)'\
                                    %(i,truth['gamma_ekin'][i],truth['gamma_edep'][i])
             graph_data[-1].mode = 'lines,markers'
-    #'''
+    '''
 
     # Add true photon's directions (based on true pi0 decay vertex and true photon's 1st (in time) edep)
     # ------------------------------------
-    '''
+    #'''
     if 'gamma_pos' in truth and 'shower_first_edep' in truth:
         for i, true_dir in enumerate(truth['gamma_pos']):
             vertex = truth['gamma_pos'][i]
@@ -237,7 +237,7 @@ def draw_event(output, truth, **kwargs):
             graph_data += scatter_points(np.array(points),markersize=4,color='green')
             graph_data[-1].name = 'True photon %i: vertex to first edep' % i
             graph_data[-1].mode = 'lines,markers'
-    '''
+    #'''
 
     # Add reconstructed pi0 decays, join vertex to start points
     # ------------------------------------

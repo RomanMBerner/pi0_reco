@@ -37,42 +37,13 @@ class Pi0Chain:
         '''
         Initialize the Pi0 reconstruction modules
         '''
-        # Initialize the data loader
-        io_cfg = yaml.load(io_cfg,Loader=yaml.Loader)
-
-        # Save config, initialize output
-        self.cfg       = chain_cfg
-        self.verbose   = verbose
-        self.event     = None
-        self.output    = {}
-        self.true_info = {}
-        self.reco_info = {}
-
-        # Initialize log
-        # TODO: Check if this is needed any longer
-        log_path = chain_cfg['name']+'_log.csv'
-        log_path = 'masses_fiducialized_' + str(chain_cfg['fiducialize']) + 'px.csv'
-        print('Initialized Pi0 mass chain, log path:', log_path)
-        self._log = CSVData(log_path)
-        self._keys = ['event_id', 'pion_id', 'pion_mass']
-
-        # If a network is specified, initialize the network
-        self.network = False
-        
-        if chain_cfg['modules']['segment']['method'] == 'uresnet' or chain_cfg['modules']['shower_start']['method'] == 'ppn':
-            self.network = True
-            with open(chain_cfg['mlreco']['cfg_path']) as cfg_file:
-                net_cfg = yaml.load(cfg_file,Loader=yaml.Loader)
-            io_cfg['model'] = net_cfg['model']
-            io_cfg['trainval'] = net_cfg['trainval']
-        
         # Process chain configuration, enforce logic
         self._process_config(chain_cfg)
 
         # Initialize logger/analyser
         self._logger = Pi0DataLogger(self._name) # Francois'
-        if self._analyse:
-            self._analyser = Analyser() # Roman's
+        #if self._analyse:
+        #    self._analyser = Analyser() # Roman's
 
         # Initialize the fragment identifier
         if self._shower_fragment == 'dbscan':
@@ -101,7 +72,11 @@ class Pi0Chain:
         process_config(self._mlreco_cfg)
         self._hs = prepare(self._mlreco_cfg)
         self._data_set = iter(self._hs.data_io)
-
+        
+        self.true_info = {}
+        self.reco_info = {}
+    
+    
     def _process_config(self, chain_cfg):
         '''
         Processes the chain configuration file, enforces some basic logic
@@ -169,7 +144,7 @@ class Pi0Chain:
                     self._mlreco_cfg['trainval']['model_path'] = mlreco_cfg['model_path']
 
         # Initialize outputs
-        self._output    = {}
+        self._output = {}
 
 
     def _print(self, message):
@@ -253,13 +228,28 @@ class Pi0Chain:
             for key in self._output['forward'].keys():
                 self._output['forward'][key] = self._output['forward'][key][0] # TODO: Assumes batch_size = 1
 
+        # Initialize analyser
+        if self._analyse:
+            self._analyser = Analyser() # Roman's
+                
         # Run the reconstruction modules
         self.run_modules(event)
 
+        
         # Analyser module for reconstructed quantities
         # self._log(event, self._output)
-        if self._analyse:
-            self._analyser.record(event, self._output)
+        #if self._analyse:
+        #    self._analyser.record(event, self._output)
+        
+        if self._fiducial == 'edge_dist':
+            fiducial = self._fiducial['max_distance'] #self._fiducial_args['max_distance']
+        else:
+            fiducial = 0
+        
+        if self._analyse: # OR WHEN DRAW!
+            #self._analyser.record(event, self._output, fiducial)
+            Analyser.extract_true_information(self, event, fiducial)
+            Analyser.extract_reco_information(self, event, self._output, fiducial)
 
 
     def run_modules(self, event):
@@ -273,6 +263,7 @@ class Pi0Chain:
         self.infer_semantics(event)
         if not len(self._output['shower_mask']):
             self._print('No shower voxel found in event {}'.format(event['index']))
+            print(' No shower voxel found in event {}'.format(event['index']))
             return
 
         # Filter out ghosts, if necessary
@@ -285,6 +276,7 @@ class Pi0Chain:
         self.reconstruct_shower_fragments(event)
         if not len(self._output['shower_fragments']):
             self._print('No shower fragment found in event {}'.format(event['index']))
+            print(' No shower fragment found in event {}'.format(event['index']))
             return
 
         # Identify primary fragments
@@ -310,19 +302,18 @@ class Pi0Chain:
         # Make fiducialization (put shower number to self._output['OOFV'] if >0 edep of the shower is OOFV)
         # Abort if there are less than two showers
         self.apply_fiducial_cut(event)
-        if len(self._output['showers']) < 3:
+        if len(self._output['showers']) < 2:
             self._print('Not enough showers found in event {} to form a pi0'.format(event['index']))
-            return
 
         # Identify pi0 decays, abort mass reconstruction if no matches are found
         self.identify_pi0(event)
         if not len(self._output['matches']):
             self._print('No pi0 found in event {}'.format(event['index']))
-            return
 
         # Compute masses
         self.pi0_mass()
-
+    
+    
     def infer_inputs(self, event):
         '''
         Ensures the data contains the necessary entries for the chain configuration.
@@ -347,8 +338,8 @@ class Pi0Chain:
             assert 'particles' in event
 
         self._output['charge'] = copy(event['input_data'])
-
-
+    
+    
     def infer_semantics(self, event):
         '''
         Process the semantic classification followingn the configuration.
@@ -790,4 +781,5 @@ class Pi0Chain:
         """
         Draws the event processed in the last run_loop.
         """
-        draw_event(self._output, self._analyser.true_info, **kwargs)
+        #print(' == ', self.true_info)
+        draw_event(self._output, self.true_info, **kwargs)
