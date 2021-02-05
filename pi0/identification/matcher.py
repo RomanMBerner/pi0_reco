@@ -3,8 +3,11 @@ from scipy.spatial import distance
 
 
 class Pi0Matcher():
+    
+    def __init__(self, **kwargs):
+        pass
 
-    def find_matches(self, reco_showers, segment, method, verbose, *ppn_track_points):
+    def find_matches(self, reco_showers, segment, method, verbose, ppn_track_points):
         '''
         Project 2 paired gammas back to their crossing point and return nearest 
         (within tolerance) track labeled hit as vertex candidate
@@ -80,9 +83,10 @@ class Pi0Matcher():
             # For all CPAs: Find track-labeled PPN points close to a CPAs
             tolerance_CPA_to_PPN = 40. # defines the max. allowed distance of a CPA to the closest track-labeled PPN point
                                        # TODO: READ FROM CONFIG FILE, organize all tolerance parameters
-            ppns = []
-            for point in ppn_track_points[0]:
-                ppns.append([point.ppns[0], point.ppns[1], point.ppns[2]])
+            #ppns = []
+            #for point in ppn_track_points[0]:
+            #    ppns.append([point.ppns[0], point.ppns[1], point.ppns[2]])
+            ppns = ppn_track_points[:,0:3]
             
             ppn_candidates = self.find_PPNs_close_to_CPAs(CPAs, ppns, tolerance_CPA_to_PPN)
             if len(ppn_candidates)==0:

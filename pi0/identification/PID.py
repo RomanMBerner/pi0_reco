@@ -67,8 +67,12 @@ class ElectronPhotonSeparator():
             #print(' p_likelihood: ', p_likelihood)
 
             # Obtain likelihood fractions
-            sh.L_e = e_likelihood / (e_likelihood + p_likelihood)
-            sh.L_p = p_likelihood / (e_likelihood + p_likelihood)
+            if (e_likelihood + p_likelihood) > 0:
+                sh.L_e = e_likelihood / (e_likelihood + p_likelihood)
+                sh.L_p = p_likelihood / (e_likelihood + p_likelihood)
+            else:
+                sh.L_e = -1000.
+                sh.L_p = -1000.
 
             if (sh.L_e + sh.L_p) < 0.999 or (sh.L_e + sh.L_p) > 1.001:
                 print(' WARNING: L_tot = L_e + L_p =', sh.L_e + sh.L_p)

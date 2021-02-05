@@ -16,7 +16,8 @@ from .cluster.cone_clusterer import ConeClusterer
 
 from .directions.estimator import DirectionEstimator
 
-from .identification.matcher_old import Pi0Matcher # Pi0 vertex is chosen as the PPN point closest to the CPA of two showers
+from .identification.matcher import Pi0Matcher
+#from .identification.matcher_old import Pi0Matcher # Pi0 vertex is chosen as the PPN point closest to the CPA of two showers
 #from .identification.matcher_new import Pi0Matcher # Pi0 vertex is chosen as the PPN point which is in 'best' angular agreement with a pair of showers
 from .identification.PID import ElectronPhotonSeparator
 
@@ -263,7 +264,6 @@ class Pi0Chain:
         self.infer_semantics(event)
         if not len(self._output['shower_mask']):
             self._print('No shower voxel found in event {}'.format(event['index']))
-            print(' No shower voxel found in event {}'.format(event['index']))
             return
 
         # Filter out ghosts, if necessary
@@ -276,7 +276,6 @@ class Pi0Chain:
         self.reconstruct_shower_fragments(event)
         if not len(self._output['shower_fragments']):
             self._print('No shower fragment found in event {}'.format(event['index']))
-            print(' No shower fragment found in event {}'.format(event['index']))
             return
 
         # Identify primary fragments
@@ -721,7 +720,10 @@ class Pi0Chain:
             sh_starts   = np.array([s.start for s in self._output['showers']])
             sh_dirs     = np.array([s.direction for s in self._output['showers']])
             sh_energies = np.array([s.energy for s in self._output['showers']])
-            self._output['matches'], self._output['vertices'], dists = self._matcher.find_matches(self._output['showers'], self._output['segment'], self._shower_match)
+            self._output['matches'], self._output['vertices'], dists = self._matcher.find_matches(self._output['showers'],\
+                                                                                                  self._output['segment'],\
+                                                                                                  self._shower_match,\
+                                                                                                  self._shower_match_args['verbose'])
 
         elif self._shower_match == 'ppn':
             # Pair showers which are most compatible with a PPN track point (vertex)
@@ -729,7 +731,7 @@ class Pi0Chain:
             points = uresnet_ppn_type_point_selector(event['input_data'],\
                 {key: [self._output['forward'][key]] for key in ['segmentation', 'points', 'mask_ppn2']})
             point_sem = points[:,-1]
-            ppn_track_points = points[point_sem == larcv.kShapeTrack, :3]
+            ppn_track_points = points[point_sem == larcv.kShapeTrack, :5]
             self._output['ppn_track_points'] = ppn_track_points
 
             # Pair closest shower vectors
@@ -737,9 +739,10 @@ class Pi0Chain:
             sh_dirs     = np.array([s.direction for s in self._output['showers']])
             sh_energies = np.array([s.energy for s in self._output['showers']])
             self._output['matches'], self._output['vertices'] = self._matcher.find_matches(self._output['showers'],\
-                                                                                        self._output['segment'],\
-                                                                                        self._shower_match,\
-                                                                                        ppn_track_points)
+                                                                                           self._output['segment'],\
+                                                                                           self._shower_match,\
+                                                                                           self._shower_match_args['verbose'],\
+                                                                                           self._output['ppn_track_points'])
 
         elif self._shower_match == 'gnn':
             raise NotImplementedError('Will be able to use interaction clustering to infer Pi0 pairings')

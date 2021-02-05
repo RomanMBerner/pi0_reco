@@ -121,7 +121,8 @@ def draw_event(output, truth, **kwargs):
         points = energy[s.voxels]
         graph_data += scatter_points(points,markersize=2,color=color)
         #graph_data[-1].name = 'Reco shower %d (n_edeps=%d, edep=%.2f, L_e=%.3f, L_p=%.3f, dir=[%.2f,%.2f,%.2f])' % (i,len(s.voxels),s.energy,s.L_e,s.L_p,s.direction[0],s.direction[1],s.direction[2])
-        graph_data[-1].name = 'Reco shower %d (edep: %.2f, dir: %.1f %.1f %.1f)' %(i,s.energy,s.direction[0],s.direction[1],s.direction[2])
+        #graph_data[-1].name = 'Reco shower %d (edep: %.2f, dir: %.1f %.1f %.1f)' %(i,s.energy,s.direction[0],s.direction[1],s.direction[2])
+        graph_data[-1].name = 'Reco shower %d (edep: %.2f, L_e=%.3f, L_p=%.3f)' %(i,s.energy,s.L_e,s.L_p)
 
     if len(output['showers'])>0:
         points = np.array([s.start for s in output['showers']])
@@ -135,7 +136,7 @@ def draw_event(output, truth, **kwargs):
                          u=-dirs[:,0], v=-dirs[:,1], w=-dirs[:,2],
                          sizemode='absolute', sizeref=1.0, anchor='tip',
                          showscale=False, opacity=0.4)
-        #graph_data.append(arrows)
+        graph_data.append(arrows)
     #'''
 
 
@@ -145,7 +146,10 @@ def draw_event(output, truth, **kwargs):
     if len(truth['gamma_pos'])>0:
         true_pi0_decays = truth['gamma_pos']
         graph_data += scatter_points(np.asarray(true_pi0_decays),markersize=5, color='green')
-        graph_data[-1].name = 'True pi0 decay vertices'
+        #graph_data[-1].name = 'True pi0 decay vertices'
+        for ind, vtx in enumerate(truth['gamma_pos']):
+            if ind%2 == 0:
+                graph_data[-1].name = 'True pi0 decay vertices (%.2f, %.2f, %.2f)' %(vtx[0],vtx[1],vtx[2])
     #'''
 
     # Add reconstructed pi0 decay points
@@ -211,6 +215,16 @@ def draw_event(output, truth, **kwargs):
         points = output['ppn_track_points']
         graph_data += scatter_points(points,markersize=4,color='magenta')
         graph_data[-1].name = 'PPN track points'
+        #print(' PPN track points: ')
+        #for i, point in enumerate(points):
+        #    print(' coord: ', point.ppns, ' \t track score: ', point.track_score, ' \t track id: ', point.track_id)
+    if 'ppn_shower_points' in output:
+        points = output['ppn_shower_points']
+        graph_data += scatter_points(points,markersize=4,color='purple')
+        graph_data[-1].name = 'PPN shower points'
+        #print(' PPN shower points: ')
+        #for i, point in enumerate(points):
+        #    print(' coord: ', point.ppns, ' \t shower score: ', point.shower_score, ' \t shower id: ', point.shower_id)
 
     # Add true photon's directions (based on true pi0 decay vertex and true photon's 1st steps)
     # ------------------------------------
