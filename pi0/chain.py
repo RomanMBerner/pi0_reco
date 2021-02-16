@@ -16,9 +16,8 @@ from .cluster.cone_clusterer import ConeClusterer
 
 from .directions.estimator import DirectionEstimator
 
-from .identification.matcher_old import Pi0Matcher # Pi0 vertex is chosen as the PPN point closest to the CPA of two showers
-#from .identification.matcher_new import Pi0Matcher # Pi0 vertex is chosen as the PPN point which is in 'best' angular agreement with a pair of showers
-from .identification.PID import ElectronPhotonSeparator
+from .identification.matcher import Pi0Matcher
+from .identification.PID import ShowerIdentifier
 
 from .visualization.plotting import draw_event
 
@@ -62,10 +61,10 @@ class Pi0Chain:
             self._clusterer = ConeClusterer(**self._shower_cluster_args)
 
         if self._shower_id == 'edep':
-            self._identifier = ElectronPhotonSeparator(**self._shower_id_args)
+            self._identifier = ShowerIdentifier(**self._shower_id_args)
 
         # If a pi0 identifier is requested, initialize it
-        if self._shower_match != 'label':
+        if self._shower_match == 'angle':
             self._matcher = Pi0Matcher(**self._shower_match_args)
 
         # Instantiate "handlers" (IO/inference tools)
@@ -96,7 +95,7 @@ class Pi0Chain:
                       'shower_cluster': ['label', 'cone', 'gnn'],
                       'shower_energy': ['label', 'pixel_sum'],
                       'shower_id': ['label', 'edep', 'gnn', 'none'],
-                      'shower_match': ['label', 'proximity', 'ppn', 'gnn'],
+                      'shower_match': ['label', 'angle', 'gnn'],
                       'fiducial': ['none', 'edge_dist']}
 
         self._network = False
@@ -194,6 +193,19 @@ class Pi0Chain:
         return np.array(labels)
 
 
+    def get_ppn_track_points(self, event):
+        '''
+        Extracts PPN track point predictions from the raw PPN output.
+        '''
+        if 'ppn_track_points' not in self._output:
+            from mlreco.utils.ppn import uresnet_ppn_type_point_selector
+            points = uresnet_ppn_type_point_selector(event['input_data'],\
+                {key: [self._output['forward'][key]] for key in ['segmentation', 'points', 'mask_ppn2']})
+            point_sem = points[:,-1]
+            ppn_track_points = points[point_sem == larcv.kShapeTrack, :3]
+            self._output['ppn_track_points'] = ppn_track_points
+
+
     def run(self):
         '''
         Runs the full Pi0 reconstruction chain, from 3D charge
@@ -281,7 +293,7 @@ class Pi0Chain:
         # Make fiducialization (put shower number to self._output['OOFV'] if >0 edep of the shower is OOFV)
         # Abort if there are less than two showers
         self.apply_fiducial_cut(event)
-        if len(self._output['showers']) < 3:
+        if len(self._output['showers']) < 2:
             self._print('Not enough showers found in event {} to form a pi0'.format(event['index']))
             return
 
@@ -642,9 +654,13 @@ class Pi0Chain:
             # TODO: This method is inherently flawed. If a gamma compton scatters, the primary is very much an electron (way around that ?)
             self._identifier.likelihood_fractions(self._output['showers'], self._output['energy'])
 
+        elif self._shower_id == 'vertex':
+            # Uses the proximity to a vertex (track point) as a criterion for e/gamma separation
+            raise NotImplementedError('Need to implement PID using proximity to vertex')
+
         elif self._shower_id == 'gnn':
             # Use the GNN to preidict its node types (electron or photon shower)
-            raise NotImplementedError('Need to implement PID in the interaction GNN')
+            raise NotImplementedError('Need to use PID coming from the interaction GNN')
 
 
     def apply_fiducial_cut(self, event): # TODO: Is this function needed any longer?
@@ -696,36 +712,22 @@ class Pi0Chain:
                 self._output['matches'].append(group_mask)
                 self._output['vertices'].append(np.array([pos.x(), pos.y(), pos.z()]))
 
-        elif self._shower_match == 'proximity':
-            # Pair showers which directions backtrack closest to each other
-            sh_starts   = np.array([s.start for s in self._output['showers']])
-            sh_dirs     = np.array([s.direction for s in self._output['showers']])
-            sh_energies = np.array([s.energy for s in self._output['showers']])
-            self._output['matches'], self._output['vertices'], dists = self._matcher.find_matches(self._output['showers'], self._output['segment'], self._shower_match)
+        elif self._shower_match == 'angle':
+            # If the matcher needs PPN, extract the PPN track points
+            if self._matcher._match_to_ppn: self.get_ppn_track_points(event)
 
-        elif self._shower_match == 'ppn':
-            # Pair showers which are most compatible with a PPN track point (vertex)
-            from mlreco.utils.ppn import uresnet_ppn_type_point_selector
-            points = uresnet_ppn_type_point_selector(event['input_data'],\
-                {key: [self._output['forward'][key]] for key in ['segmentation', 'points', 'mask_ppn2']})
-            point_sem = points[:,-1]
-            ppn_track_points = points[point_sem == larcv.kShapeTrack, :3]
-            self._output['ppn_track_points'] = ppn_track_points
-
-            # Pair closest shower vectors
-            sh_starts   = np.array([s.start for s in self._output['showers']])
-            sh_dirs     = np.array([s.direction for s in self._output['showers']])
-            sh_energies = np.array([s.energy for s in self._output['showers']])
-            self._output['matches'], self._output['vertices'] = self._matcher.find_matches(self._output['showers'],\
-                                                                                        self._output['segment'],\
-                                                                                        self._shower_match,\
-                                                                                        ppn_track_points)
+            # Pair showers which are most likely to originate from a common vertex
+            track_mask = self._output['segment'][:,-1] == larcv.kShapeTrack
+            self._output['matches'], self._output['vertices'], _ =\
+                self._matcher.find_matches(self._output['showers'],
+                                           self._output['segment'][track_mask, :3],
+                                           self._output.get('ppn_track_points'))
 
         elif self._shower_match == 'gnn':
-            raise NotImplementedError('Will be able to use interaction clustering to infer Pi0 pairings')
+            raise NotImplementedError('Will be able to use interaction clustering to orient Pi0 pairings')
 
         # If requested, use the newly reconstructed Pi0 vertex to adjust the shower directions
-        if self._shower_match != 'label' and self._shower_match_args['refit_dir']:
+        if self._shower_match_args['refit_dir']:
             for i, match in enumerate(self._output['matches']):
                 idx1, idx2 = match
                 v = np.array(self._output['vertices'][i])
@@ -761,4 +763,5 @@ class Pi0Chain:
         """
         Draws the event processed in the last run_loop.
         """
-        draw_event(self._output, self._analyser.true_info, **kwargs)
+        #draw_event(self._output, self._analyser.true_info, **kwargs)
+        draw_event(self._output, None, **kwargs)
