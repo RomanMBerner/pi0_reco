@@ -60,7 +60,7 @@ class Pi0Chain:
         if self._shower_cluster != 'label':
             self._clusterer = ConeClusterer(**self._shower_cluster_args)
 
-        if self._shower_id == 'edep':
+        if self._shower_id == 'edep' or self._shower_id == 'vertex':
             self._identifier = ShowerIdentifier(**self._shower_id_args)
 
         # If a pi0 identifier is requested, initialize it
@@ -94,7 +94,7 @@ class Pi0Chain:
                       'shower_direction': ['label', 'geo'],
                       'shower_cluster': ['label', 'cone', 'gnn'],
                       'shower_energy': ['label', 'pixel_sum'],
-                      'shower_id': ['label', 'edep', 'gnn', 'none'],
+                      'shower_id': ['label', 'edep', 'vertex', 'gnn', 'none'],
                       'shower_match': ['label', 'angle', 'gnn'],
                       'fiducial': ['none', 'edge_dist']}
 
@@ -117,6 +117,8 @@ class Pi0Chain:
             assert self._shower_fragment == 'gnn', 'Shower fragments must be formed by GNN to identified by it'
         if self._shower_cluster == 'gnn':
             assert self._shower_primary == 'gnn', 'Shower primaries must be identified by GNN to be clustered by it'
+        if self._shower_id == 'gnn':
+            assert self._shower_cluster == 'gnn', 'Shower objects must be clustered by GNN for them to be identified by it'
         if self._shower_cluster != 'label':
             assert self._shower_energy != 'label', 'Label shower energy would ignore non-label clustering'
 
@@ -287,7 +289,7 @@ class Pi0Chain:
         # Reconstruct shower energy
         self.reconstruct_shower_energy(event)
 
-        # Reconstruct shower likelihood fractions (electron/positron like or photon like)
+        # Reconstruct shower likelihood ratios (electron/positron like or photon like)
         self.reconstruct_shower_id(event)
 
         # Make fiducialization (put shower number to self._output['OOFV'] if >0 edep of the shower is OOFV)
@@ -315,16 +317,19 @@ class Pi0Chain:
             assert 'segment_label' in event, 'No segment_label data in the input, needed for true semantics'
             assert event['segment_label'].shape == event['input_data'].shape
             self._output['segment_label'] = copy(event['segment_label'])
+
         if self._charge2e == 'label':
             assert 'energy_label' in event, 'No energy_label data in the input, needed for true energy'
             assert event['energy_label' ].shape == event['input_data'].shape
             self._output['energy_label'] = copy(event['energy_label'])
+
         if 'label' in [self._shower_fragment, self._shower_primary,\
             self._shower_start, self._shower_direction, self._shower_cluster,\
             self._shower_energy, self._shower_id, self._shower_match]:
             assert 'cluster_label' in event
             assert event['cluster_label' ].shape[0] == event['input_data'].shape[0]
             self._output['cluster_label'] = copy(event['cluster_label'])
+
         if 'label' in [self._shower_primary, self._shower_start, self._shower_direction,\
                 self._shower_energy, self._shower_id, self._shower_match]:
             assert 'particles' in event
@@ -340,6 +345,7 @@ class Pi0Chain:
         if self._segment == 'label':
             # The segmentation is the exact true segmentation
             self._output['segment'] = event['segment_label']
+
         elif self._segment == 'uresnet':
             # Get the segmentation output of the network, argmax to determine most probable label
             self._output['segment'] = copy(event['segment_label'])
@@ -356,9 +362,11 @@ class Pi0Chain:
         if self._deghost == 'none':
             # No deghosting needed, return
             return
+
         elif self._deghost == 'label':
             # Remove points labeled as ghosts
             mask = np.where(event['segment_label'][:,-1] != 5)[0]
+
         elif self._deghost == 'uresnet':
             # Get the segmentation output of the network, argmax to determine most probable label
             pred_ghost = np.argmax(self._output['forward']['ghost'], axis=1)
@@ -380,14 +388,17 @@ class Pi0Chain:
         if self._charge2e == 'none':
             # The input to the reconstruction chain is energy, ignore this step
             self._output['energy'] = copy(self._output['charge'])
+
         elif self._charge2e == 'label':
             # Use the energy_label as energy
             self._output['energy'] = self._output['energy_label']
+
         elif self._charge2e == 'constant':
             # Use a constant factor to convert from charge to energy
             assert 'cst' in self._charge2e_args, 'Constant factor for energy reconstruction not specified'
             self._output['energy'] = copy(self._output['charge'])
             self._output['energy'][:,-1] = self._charge2e_args['cst']*self._output['charge'][:,-1]
+
         elif self._charge2e == 'average':
             # Use an constant average energy value for all the voxels, ignore input charge
             assert 'average' in self._charge2e_args, 'Average energy per shower voxel not specified'
@@ -622,6 +633,7 @@ class Pi0Chain:
             for i, s in enumerate(self._output['showers']):
                 group_id = event['particles'][clust_ids[i]].group_id()
                 s.energy = event['particles'][group_id].energy_init()
+
         elif self._shower_energy == 'pixel_sum':
             # Sum the energy of all the voxels in the shower
             for s in self._output['showers']:
@@ -632,7 +644,7 @@ class Pi0Chain:
 
     def reconstruct_shower_id(self, event):
         '''
-        Obtain the electron/positron and photon likelihood fractions for the showers.
+        Obtain the electron/positron and photon likelihood ratios for the showers.
         '''
         if self._shower_id == 'none':
             # Set all photon likelihood to one, all the showers will be candidates to be matched
@@ -652,15 +664,24 @@ class Pi0Chain:
         elif self._shower_id == 'edep':
             # Use the energy deposition at the start of a shower a criterion for e/gamma separation
             # TODO: This method is inherently flawed. If a gamma compton scatters, the primary is very much an electron (way around that ?)
-            self._identifier.likelihood_fractions(self._output['showers'], self._output['energy'])
+            self._identifier.set_edep_lr(self._output['showers'], self._output['energy'])
 
         elif self._shower_id == 'vertex':
-            # Uses the proximity to a vertex (track point) as a criterion for e/gamma separation
-            raise NotImplementedError('Need to implement PID using proximity to vertex')
+            # Uses the proximity to a vertex (PPN track point) as a criterion for e/gamma separation
+            self.get_ppn_track_points(event)
+            self._identifier.set_vertex_lr(self._output['showers'], self._output['ppn_track_points'])
 
         elif self._shower_id == 'gnn':
             # Use the GNN to preidict its node types (electron or photon shower)
-            raise NotImplementedError('Need to use PID coming from the interaction GNN')
+            assert 'inter_node_pred' in self._output['forward'], 'Need node predictions in the interaction GNN to do PID with it'
+            shower_mask = np.where(self._output['forward']['particles_seg'] == larcv.kShapeShower)[0]
+            assert len(shower_mask) == len(self._output['showers'])
+
+            from scipy.special import softmax
+            node_scores = softmax(self._output['forward']['inter_node_pred'], axis=1)
+            for i, s in enumerate(self._output['showers']):
+                s.L_e = node_scores[shower_mask[i], 1]
+                s.L_p = node_scores[shower_mask[i], 0]
 
 
     def apply_fiducial_cut(self, event): # TODO: Is this function needed any longer?

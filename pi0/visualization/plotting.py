@@ -254,6 +254,12 @@ def draw_event(output, truth=None, draw_modules=False, **kwargs):
     graph_data += scatter_points(energy, markersize=2, color=energy[:,-1], colorscale='Inferno')
     graph_data[-1].name = 'Energy'
 
+    # Draw the proposed PPN track points, if present:
+    if 'ppn_track_points' in output:
+        points = output['ppn_track_points']
+        graph_data += scatter_points(points,markersize=4,color='magenta')
+        graph_data[-1].name = 'PPN track points'
+
     # Draw the shower fragments
     if 'shower_fragments' in output:
         fragments = output['shower_fragments']
@@ -309,12 +315,6 @@ def draw_event(output, truth=None, draw_modules=False, **kwargs):
         # Draw the decay vertices
         graph_data += scatter_points(np.vstack(output['vertices']), markersize=4, color='lightgreen')
         graph_data[-1].name = 'Pi0 decay vertices'
-
-        # Draw the proposed PPN track points, if present:
-        if 'ppn_track_points' in output:
-            points = output['ppn_track_points']
-            graph_data += scatter_points(points,markersize=4,color='magenta')
-            graph_data[-1].name = 'PPN track points'
 
     # Add outer module dimensions (TODO: Check dimensions, probably add active volumes instead of outer module edges)
     if draw_modules:

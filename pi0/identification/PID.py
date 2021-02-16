@@ -18,17 +18,29 @@ class ShowerIdentifier():
         self._p_shift       = cfg.get('p_shift', 10.233)     # Peak of the electron dEdx distribution
         self._p_squeeze     = cfg.get('p_squeeze', 2.542)    # Inverse width (?) of the electron dEdx distribution
 
-    def likelihood_fractions(self, showers, energy):
+        self._min_sep       = cfg.get('min_sep', 3)          # Minimal separation between shower start and vertex to be considered a photon
+
+    def moyal(self, dEdx, type):
         '''
-        Obtain the electron and photon likelihood fractions for the showers by looking at
+        Computes the value of the Moyal distribution (approx. to Landau) at a specific dEdx
+
+        Inputs:
+            - dEdx: Energy deposition per unit length in MeV/cm
+            - type: Particle type ('p' for photon, 'e' for electron)
+        Returns:
+            - Value of the Moyal distribution in dEdx
+        '''
+        a, b, c = getattr(self, f'_{type}_scale'), getattr(self, f'_{type}_shift'), getattr(self, f'_{type}_squeeze')
+        return a * 1./(np.sqrt(2.*np.pi)) * np.exp(-0.5*((c*dEdx-b)+np.exp(-(c*dEdx-b))))
+
+    def set_edep_lr(self, showers, energy):
+        '''
+        Obtain the electron and photon likelihood ratios for the showers by looking at
         the dE/dx value at the very start of an EM shower.
 
         Inputs:
             - showers (M x 1): Array of M shower objects (defined in chain.py)
             - energy (N x 5): All energy deposits (x,y,z,batch_id,edep) which have semantic segmentation 'shower'
-        Returns:
-            - L_electron (M x 1): Array of M electron likelihood fractions (one likelihood fraction per showers)
-            - L_photon (M x 1): Array of M photon likelihood fraction (one likelihood fraction per showers)
         '''
 
         # Loop over all shower objects, sum up the energy depositions within some distance
@@ -53,18 +65,28 @@ class ShowerIdentifier():
                 sh.L_e = e_likelihood / (e_likelihood + p_likelihood)
                 sh.L_p = p_likelihood / (e_likelihood + p_likelihood)
             else:
-                sh.L_e = -1
-                sh.L_p = -1
+                sh.L_e = float(dEdx < self._e_shift/self._e_squeeze)
+                sh.L_p = float(dEdx > self._p_shift/self._p_squeeze)
 
-    def moyal(self, dEdx, type):
+    def set_vertex_lr(self, showers, vertices):
         '''
-        Computes the value of the Moyal distribution (approx. to Landau) at a specific dEdx
+        Obtain the electron and photon likelihood ratios for the showers by looking at
+        their distance from the closest interaction vertex.
 
         Inputs:
-            - dEdx: Energy deposition per unit length in MeV/cm
-            - type: Particle type ('p' for photon, 'e' for electron)
-        Returns:
-            - Value of the Moyal distribution in dEdx
+            - showers (M x 1): Array of M shower objects (defined in chain.py)
+            - vertices (N x 3): List of potential interaction vertices
         '''
-        a, b, c = getattr(self, f'_{type}_scale'), getattr(self, f'_{type}_shift'), getattr(self, f'_{type}_squeeze')
-        return a * 1./(np.sqrt(2.*np.pi)) * np.exp(-0.5*((c*dEdx-b)+np.exp(-(c*dEdx-b))))
+
+        # Loop over all shower objects, sum up the energy depositions within some distance
+        # and calculate the likelihood fractions from the dEdx distributions.
+        for sh_index, sh in enumerate(showers):
+
+            # Find how close the shower start is from the closest vertex candidate
+            dists = cdist(sh.start.reshape(1,3), vertices)
+            sep   = np.min(dists)
+            print(sep)
+
+            # Give a photon an LR of 1 if the shower is removed by more than min_sep, 0 otherwise
+            sh.L_e = float(sep <= self._min_sep)
+            sh.L_p = float(sep >  self._min_sep)
