@@ -60,11 +60,11 @@ class Pi0Chain:
         if self._shower_cluster != 'label':
             self._clusterer = ConeClusterer(**self._shower_cluster_args)
 
-        if self._shower_id == 'edep' or self._shower_id == 'vertex':
+        if self._shower_id in ['edep', 'vertex']:
             self._identifier = ShowerIdentifier(**self._shower_id_args)
 
         # If a pi0 identifier is requested, initialize it
-        if self._shower_match == 'angle':
+        if self._shower_match in ['angle', 'gnn']:
             self._matcher = Pi0Matcher(**self._shower_match_args)
 
         # Instantiate "handlers" (IO/inference tools)
@@ -114,11 +114,11 @@ class Pi0Chain:
 
         # Enforce logical order of modules
         if self._shower_primary == 'gnn':
-            assert self._shower_fragment == 'gnn', 'Shower fragments must be formed by GNN to identified by it'
+            assert self._shower_fragment == 'gnn', 'Shower fragments must be formed by GNN to be identified by it'
         if self._shower_cluster == 'gnn':
             assert self._shower_primary == 'gnn', 'Shower primaries must be identified by GNN to be clustered by it'
-        if self._shower_id == 'gnn':
-            assert self._shower_cluster == 'gnn', 'Shower objects must be clustered by GNN for them to be identified by it'
+        if self._shower_id == 'gnn' or self._shower_match == 'gnn':
+            assert self._shower_cluster == 'gnn', 'Shower objects must be clustered by a GNN for them to be identified and grouped by the GNN'
         if self._shower_cluster != 'label':
             assert self._shower_energy != 'label', 'Label shower energy would ignore non-label clustering'
 
@@ -304,7 +304,7 @@ class Pi0Chain:
             self._print('No pi0 found in event {}'.format(event['index']))
             return
 
-        # Compute masses
+        # Compute invariant masses of shower pairs
         self.pi0_mass()
 
     def infer_inputs(self, event):
@@ -444,38 +444,37 @@ class Pi0Chain:
         Identify fragments that initiated a shower (primaries). For each of the identified
         primary fragment, associate a unique shower object.
         '''
+        primaries = []
         if self._shower_primary == 'label':
             # Create one primary per shower group. Select the fragment with earliest time as primary
             clust_ids    = self.get_fragment_labels()
             group_ids    = self.get_fragment_labels(group=True)
-            primary_mask = np.zeros(len(group_ids), dtype=bool)
             for g in np.unique(group_ids):
                 mask = np.where(group_ids == g)[0]
                 times = [event['particles'][i].first_step().t() for i in clust_ids[mask]]
                 idx   = np.argmin(times)
-                primary_mask[mask[idx]] = True
+                primaries.append(mask[idx])
 
         elif self._shower_primary == 'gnn':
             # For each predicted shower group, pick the most likely node as the primary
             group_ids = self._output['forward']['shower_group_pred']
             if 'shower_node_pred' not in self._output['forward']:
-                primary_mask = np.ones(1, dtype=bool)
+                primaries = np.zeros(1, dtype=bool)
             else:
                 from scipy.special import softmax
                 node_scores = softmax(self._output['forward']['shower_node_pred'], axis=1)
-                primary_mask = np.zeros(len(group_ids), dtype=bool)
                 for g in np.unique(group_ids):
                     mask = np.where(group_ids == g)[0]
                     idx  = node_scores[mask][:,1].argmax()
-                    primary_mask[mask[idx]] = True
+                    primaries.append(mask[idx])
 
         # Create one shower object for each primary in the image, store leftover fragments
+        secondaries = [i for i in np.arange(len(group_ids)) if i not in primaries]
         self._output['showers'], self._output['leftover_fragments'] = [], []
-        for i, f in enumerate(self._output['shower_fragments']):
-            if primary_mask[i]:
-                self._output['showers'].append(Shower(voxels=f, pid=group_ids[i]))
-            else:
-                self._output['leftover_fragments'].append(f)
+        for i in primaries:
+            self._output['showers'].append(Shower(voxels=self._output['shower_fragments'][i], pid=group_ids[i]))
+        for i in secondaries:
+            self._output['leftover_fragments'].append(self._output['shower_fragments'][i])
 
 
     def reconstruct_shower_starts(self, event):
@@ -694,7 +693,6 @@ class Pi0Chain:
 
         elif self._fiducial == 'edge_dist':
             # Loop over showers, check if any of the energy deposits are outside of fiducial
-            assert 'max_distance' in self._fiducial_args, 'Need to specify minimum distance from volume edge'
             max_dist = self._fiducial_args.get('max_distance')
             lower    = self._fiducial_args.get('lower_bound', 0)
             upper    = self._fiducial_args.get('upper_bound', 768)
@@ -738,17 +736,46 @@ class Pi0Chain:
 
         elif self._shower_match == 'angle':
             # If the matcher needs PPN, extract the PPN track points
+            track_mask = self._output['segment'][:,-1] == larcv.kShapeTrack
             if self._matcher._match_to_ppn: self.get_ppn_track_points(event)
 
             # Pair showers which are most likely to originate from a common vertex
-            track_mask = self._output['segment'][:,-1] == larcv.kShapeTrack
             self._output['matches'], self._output['vertices'], _ =\
                 self._matcher.find_matches(self._output['showers'],
                                            self._output['segment'][track_mask, :3],
                                            self._output.get('ppn_track_points'))
 
         elif self._shower_match == 'gnn':
-            raise NotImplementedError('Will be able to use interaction clustering to orient Pi0 pairings')
+            # Get the necessary outputs of the forward function
+            assert 'inter_group_pred' in self._output['forward'], 'Need group prediction in the interaction GNN to use it for matching'
+            particles    = self._output['forward']['particles']
+            part_seg     = self._output['forward']['particles_seg']
+            inter_groups = self._output['forward']['inter_group_pred']
+            assert len(inter_groups) == len(part_seg)
+
+            # If the matcher needs PPN, extract the PPN track points associated with each interaction
+            voxels = self._output['segment'][:,:3]
+            if self._matcher._match_to_ppn:
+                from scipy.spatial.distance import cdist
+                self.get_ppn_track_points(event)
+                dist_mat   = np.vstack([np.min(cdist(self._output['ppn_track_points'], voxels[c]), axis=1).flatten() for c in particles])
+                ppn_groups = inter_groups[np.argmin(dist_mat, axis=0)]
+
+            # Run the matching algorithm on seperate interactions independently
+            self._output['matches'], self._output['vertices'] = [], []
+            shower_mask, track_mask  = part_seg == [[larcv.kShapeShower],[larcv.kShapeTrack]]
+            for g in np.unique(inter_groups):
+                group_mask = inter_groups == g
+                submask    = np.where(group_mask & shower_mask)[0]
+                if len(submask) < 2:
+                    continue
+
+                showers          = [self._output['showers'][i] for i in submask]
+                track_points     = [voxels[c] for c in particles[group_mask & track_mask]]
+                ppn_track_points = self._output.get('ppn_track_points')[ppn_groups == g] if self._matcher._match_to_ppn else None
+                matches, vertices, _ = self._matcher.find_matches(showers, track_points, ppn_track_points)
+                self._output['matches'].extend(submask[matches])
+                self._output['vertices'].extend(vertices)
 
         # If requested, use the newly reconstructed Pi0 vertex to adjust the shower directions
         if self._shower_match_args.get('refit_dir', False):

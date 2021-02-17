@@ -21,8 +21,6 @@ class Pi0Matcher():
         self._mean_free_path = cfg.get('mean_free_path', 18.129)          # Photon asymptotic mean free path in cm
         self._voxel_size     = cfg.get('voxel_size', 0.3)                 # Image voxel size in cm
 
-        if self._match_to_ppn: self._match_to_track = False
-
     def find_matches(self, showers, track_points=None, ppn_track_points=None):
         '''
         Matches gammas by finding their most likely crossing point. The likelihood
@@ -60,18 +58,23 @@ class Pi0Matcher():
         ver_mat = [[0., 0., 0.] for _ in range(ns*ns)]
         for i in range(ns):
             for j in range(i+1, ns):
+                matched = False
                 starts, dirs = [sh_starts[i], sh_starts[j]], [sh_directions[i], sh_directions[j]]
-                if self._match_to_track:
-                    assert track_points is not None and len(track_points), 'Need track points to match to track'
-                    angles = [self.angular_displacement(starts, dirs, v) for v in track_points]
-                    vertex = track_points[np.argmin(angles)]
-                    angle  = np.min(angles)
-                elif self._match_to_ppn:
-                    assert ppn_track_points is not None and len(ppn_track_points), 'Need PPN track points to match to them'
-                    angles = [self.angular_displacement(starts, dirs, v) for v in ppn_track_points]
-                    vertex = ppn_track_points[np.argmin(angles)]
-                    angle  = np.min(angles)
-                else:
+                if self._match_to_ppn:
+                    assert ppn_track_points is not None, 'Need PPN track points to match to them'
+                    if len(ppn_track_points):
+                        angles = [self.angular_displacement(starts, dirs, v) for v in ppn_track_points]
+                        vertex = ppn_track_points[np.argmin(angles)]
+                        angle  = np.min(angles)
+                        matched = True
+                if self._match_to_track and not matched:
+                    assert track_points is not None, 'Need track points to match to track'
+                    if len(track_points):
+                        angles = [self.angular_displacement(starts, dirs, v) for v in track_points]
+                        vertex = track_points[np.argmin(angles)]
+                        angle  = np.min(angles)
+                        matched = True
+                if not matched:
                     vertex = self.find_crossing([sh_starts[i], sh_starts[j]], [sh_directions[i], sh_directions[j]])
                     angle  = self.angular_displacement([sh_starts[i], sh_starts[j]], [sh_directions[i], sh_directions[j]], vertex)
 
