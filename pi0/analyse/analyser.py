@@ -363,7 +363,7 @@ class Analyser():
         self.reco_info['ev_id']    = event['index']
         self.reco_info['n_pi0']    = len(output['matches'])
         self.reco_info['n_gammas'] = 2.*len(output['matches'])
-        self.reco_info['OOFV']     = output['OOFV']
+        self.reco_info['OOFV']     = np.where([s.fiducial for s in output['showers']])[0]
 
         print(' ============ n reco pi0: ', self.reco_info['n_pi0'])
 
@@ -702,7 +702,7 @@ class Analyser():
         #self.reco_info['gamma_n_voxels']         = []                               # [-]
         #self.reco_info['gamma_angle']            = []                               # [rad]
         #self.reco_info['pi0_mass']               = []                               # [MeV/c2]
-        self.reco_info['OOFV']                   = output['OOFV']              # [-]
+        self.reco_info['OOFV']                   = np.where([s.fiducial for s in output['showers']])[0]              # [-]
 
         showers = output['showers']
 

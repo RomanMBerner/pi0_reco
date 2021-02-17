@@ -35,7 +35,7 @@ class ShowerIdentifier():
 
     def set_edep_lr(self, showers, energy):
         '''
-        Obtain the electron and photon likelihood ratios for the showers by looking at
+        Sets the electron and photon likelihood ratios for the showers by looking at
         the dE/dx value at the very start of an EM shower.
 
         Inputs:
@@ -70,7 +70,7 @@ class ShowerIdentifier():
 
     def set_vertex_lr(self, showers, vertices):
         '''
-        Obtain the electron and photon likelihood ratios for the showers by looking at
+        Sets the electron and photon likelihood ratios for the showers by looking at
         their distance from the closest interaction vertex.
 
         Inputs:

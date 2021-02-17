@@ -292,9 +292,8 @@ class Pi0Chain:
         # Reconstruct shower likelihood ratios (electron/positron like or photon like)
         self.reconstruct_shower_id(event)
 
-        # Make fiducialization (put shower number to self._output['OOFV'] if >0 edep of the shower is OOFV)
-        # Abort if there are less than two showers
-        self.apply_fiducial_cut(event)
+        # Identify which showers are contained within the fiducial volume.
+        self.identify_fiducial(event)
         if len(self._output['showers']) < 2:
             self._print('Not enough showers found in event {} to form a pi0'.format(event['index']))
             return
@@ -684,22 +683,26 @@ class Pi0Chain:
                 s.L_p = node_scores[shower_mask[i], 0]
 
 
-    def apply_fiducial_cut(self, event): # TODO: Is this function needed any longer?
+    def identify_fiducial(self, event):
         '''
-        If a shower has edeps Out Of Fiducial Volume (OOFV), put the shower number to self._output['OOFV']
+        If a shower has energy depositions outside of fiducial volume,
+        record it as a shower attribute
         '''
         if self._fiducial == 'none':
             # If no fiducial cut is required, skip this step
-            self._output['OOFV'] = []
+            pass
+
         elif self._fiducial == 'edge_dist':
-            # Loop over showers, if any of the energy deposits are outside of fiducial, record shower id
+            # Loop over showers, check if any of the energy deposits are outside of fiducial
             assert 'max_distance' in self._fiducial_args, 'Need to specify minimum distance from volume edge'
-            max_dist = self._fiducial_args['max_distance']
-            self._output['OOFV'] = []
-            for i, s in enumerate(self._output['showers']):
+            max_dist = self._fiducial_args.get('max_distance')
+            lower    = self._fiducial_args.get('lower_bound', 0)
+            upper    = self._fiducial_args.get('upper_bound', 768)
+
+            for s in self._output['showers']:
                 coords = self._output['energy'][s.voxels,:3]
-                if np.any(coords < max_dist) or np.any(coords > (767-max_dist)): # TODO: Size hard corded
-                    self._output['OOFV'].append(i)
+                if np.any(coords < (lower+max_dist)) or np.any(coords >= (upper-max_dist)):
+                    s.fiducial = False
 
 
     def identify_pi0(self, event):
@@ -748,7 +751,7 @@ class Pi0Chain:
             raise NotImplementedError('Will be able to use interaction clustering to orient Pi0 pairings')
 
         # If requested, use the newly reconstructed Pi0 vertex to adjust the shower directions
-        if self._shower_match_args['refit_dir']:
+        if self._shower_match_args.get('refit_dir', False):
             for i, match in enumerate(self._output['matches']):
                 idx1, idx2 = match
                 v = np.array(self._output['vertices'][i])
@@ -763,7 +766,7 @@ class Pi0Chain:
                         continue
                     self._output['showers'][shower_idx].direction = new_dir/np.linalg.norm(new_dir)
 
-        if self._shower_energy == 'cone' and self._shower_match_args['refit_cone']:
+        if self._shower_energy == 'cone' and self._shower_match_args.get('refit_cone', False):
             self.reconstruct_shower_energy(event)
 
 

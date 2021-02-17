@@ -10,7 +10,8 @@ class Pi0Matcher():
         '''
         self._min_energy     = cfg.get('min_energy', 10)                  # Minimum shower energy in MeV
         self._select_photons = cfg.get('select_photons', False)           # Only use showers classified as photon-induced
-        self._min_photon_l   = cfg.get('min_photon_l', 0.5)               # Minimum photon score to be classified as photon
+        self._min_photon_lr  = cfg.get('min_photon_lr', 0.5)              # Minimum photon score to be classified as photon
+        self._apply_fiducial = cfg.get('apply_fiducial', False)           # Only uses showers that stay inside the fiducial volume
 
         self._match_to_track = cfg.get('match_to_track', False)           # Pick the track point that minimizes angular disagreement
         self._match_to_ppn   = cfg.get('match_to_ppn', True)              # Pick the PPN track point that minimizes angular disagreement
@@ -42,7 +43,10 @@ class Pi0Matcher():
         mask = sh_energies > self._min_energy
         if self._select_photons:
             sh_photon_ls = np.array([s.L_p for s in showers])
-            mask &= sh_photon_ls > self._min_photon_l
+            mask &= sh_photon_ls > self._min_photon_lr
+        if self._apply_fiducial:
+            sh_fiducials = np.array([s.fiducial for s in showers])
+            mask &= sh_fiducials
         mask = np.where(mask)[0]
         ns   = len(mask)
         if ns < 2: return [], [], []
