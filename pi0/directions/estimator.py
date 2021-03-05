@@ -5,23 +5,22 @@ from scipy.spatial.distance import cdist
 
 class DirectionEstimator():
 
-    def __init__(self, mode='cent', max_distance=-1, optimize=False, normalize=True, weighted=False):
+    def __init__(self, **cfg):
         """
-        Initilize the estimator parameters
-        - mode: method for estimating direction, choose 'pca' or 'cent'
-        - max_distance: maximum distance cut for primary fragment
-        - optimize: optimize the neighborhood size
-        - normalize: True returns unit direction vectors.
-        - weighted: If True, computes the weighted centroid.
+        Extracts the direction esimatator parameters from the module configuration
         """
         self._directions   = None
-        self._mode         = mode
-        self._max_distance = max_distance
-        self._optimize     = optimize
-        self._normalize    = normalize
-        self._weighted     = weighted
-        modes              = ['cent', 'pca']
-        assert mode in modes, f'Direction estimation mode {mode} not recognized, must be one of {modes}'
+
+        self._mode         = cfg.get('mode', 'cent')    # Method for estimating direction
+        self._min_distance = cfg.get('min_distance', 5) # Minimum neighborhood radius to consider to estimate direction
+        self._max_distance = cfg.get('max_distance', 5) # Neighborhood radius used to estimate direction if not optimize
+        self._optimize     = cfg.get('optimize', False) # Optimize the neighborhood radius to minimize transverse spread
+        self._normalize    = cfg.get('normalize', True) # Normalize direction vector length to 1
+        self._weighted     = cfg.get('weighted', False) # Give move weight to voxels with a higher value
+
+        modes = ['cent', 'pca']
+        assert self._mode in modes,\
+            f'Direction estimation mode {self._mode} not recognized, must be one of {modes}'
 
     def get_directions(self, primaries, fragments):
         """
@@ -55,11 +54,18 @@ class DirectionEstimator():
                 coords = coords[order]
                 dist_mat = dist_mat[order]
 
+                # If a minimum distance is specified, find which is the first point to consider
+                min_id = 2
+                if self._min_distance > 0:
+                    inside_mask = np.where(dist_mat < self._min_distance)[0]
+                    if len(inside_mask):
+                        min_id = inside_mask[-1]
+
                 # Find the PCA relative secondary spread for each point
                 labels = np.zeros(len(coords))
-                meank = np.mean(coords[:3], axis=0)
-                covk = (coords[:3]-meank).T.dot(coords[:3]-meank)/3
-                for i in range(2, len(coords)):
+                meank = np.mean(coords[:min_id+1], axis=0)
+                covk = (coords[:min_id+1]-meank).T.dot(coords[:min_id+1]-meank)/(min_id+1)
+                for i in range(min_id, len(coords)):
                     # Get the eigenvalues and eigenvectors, identify point of minimum secondary spread
                     w, _ = np.linalg.eigh(covk)
                     labels[i] = np.sqrt(w[2]/(w[0]+w[1])) if (w[0]+w[1]) else 0.
