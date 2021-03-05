@@ -210,9 +210,8 @@ class Pi0Chain:
 
     def run(self):
         '''
-        Runs the full Pi0 reconstruction chain, from 3D charge
-        information to Pi0 masses for events that contain one
-        or more Pi0 decay.
+        Runs the full Pi0 reconstruction chain on the entire data set,
+        from 3D charge information to Pi0 masses.
         '''
         n_events = len(self._hs.data_io)
         for i in range(n_events):
@@ -221,30 +220,46 @@ class Pi0Chain:
 
     def run_loop(self):
         '''
-        Runs the full Pi0 reconstruction chain on a single event,
-        from 3D charge information to Pi0 masses for events that
-        contain one or more Pi0 decay.
+        Runs the full Pi0 reconstruction chain on a single batch,
+        from 3D charge information to Pi0 masses.
         '''
-        # Reset output
-        self._output = {}
-
-        # Load data
+        # Load a batch
         if not self._network:
-            event = next(self._data_set)
+            from mlreco.utils.unwrap import unwrap_3d_scn
+            input = next(self._data_set)
+            avoid_keys = []
+            for key in input:
+                if isinstance(input[key], np.ndarray):
+                    input[key] = [input[key]]
+                else:
+                    avoid_keys.append(key)
+            input, _ = unwrap_3d_scn(input, {}, avoid_keys)
         else:
-            event, self._output['forward'] = self._hs.trainer.forward(self._data_set)
-            for key in event.keys():
-                event[key] = event[key][0] # TODO: Assumes batch_size = 1
-            for key in self._output['forward'].keys():
-                self._output['forward'][key] = self._output['forward'][key][0] # TODO: Assumes batch_size = 1
+            input, forward = self._hs.trainer.forward(self._data_set)
 
-        # Run the reconstruction modules
-        self.run_modules(event)
+        # Loop over the batches
+        for b in range(len(input['index'])):
 
-        # Analyser module for reconstructed quantities
-        self._log(event, self._output)
-        if self._analyse:
-            self._analyser.record(event, self._output)
+            # Reset output
+            self._output = {}
+
+            # For each data product, get the current batch
+            event = {}
+            for key in input.keys():
+                event[key] = input[key][b]
+            if self._network:
+                self._output['forward'] = {}
+                for key in forward.keys():
+                    if len(forward[key]) == len(input['index']):
+                        self._output['forward'][key] = forward[key][b]
+
+            # Run the reconstruction modules
+            self.run_modules(event)
+
+            # Log and/or analyze the results
+            self._log(event, self._output)
+            if self._analyse:
+                self._analyser.record(event, self._output)
 
 
     def run_modules(self, event):
