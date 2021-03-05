@@ -86,7 +86,7 @@ class Pi0Matcher():
 
         # Convert matches back to original shower id
         if len(matches):
-            matches = mask[np.vstack(matches)]
+            matches = mask[np.vstack(matches)].tolist()
 
         return matches, vertices, angles
 

@@ -242,7 +242,7 @@ class Pi0Chain:
         self.run_modules(event)
 
         # Analyser module for reconstructed quantities
-        # self._log(event, self._output)
+        self._log(event, self._output)
         if self._analyse:
             self._analyser.record(event, self._output)
 
@@ -306,6 +306,7 @@ class Pi0Chain:
 
         # Compute invariant masses of shower pairs
         self.pi0_mass()
+
 
     def infer_inputs(self, event):
         '''
@@ -434,7 +435,8 @@ class Pi0Chain:
 
         # If any shower voxel is not a shower fragment, store as leftover energy
         full_mask = np.ones(len(self._output['segment']), dtype=np.bool)
-        full_mask[np.concatenate(self._output['shower_fragments'])] = False
+        if len(self._output['shower_fragments']):
+            full_mask[np.concatenate(self._output['shower_fragments'])] = False
         full_mask = np.where(full_mask)[0]
         self._output['leftover_energy'] = full_mask[self._output['segment'][full_mask,-1] == larcv.kShapeShower]
 
@@ -450,7 +452,7 @@ class Pi0Chain:
             clust_ids    = self.get_fragment_labels()
             group_ids    = self.get_fragment_labels(group=True)
             for g in np.unique(group_ids):
-                mask = np.where(group_ids == g)[0]
+                mask  = np.where(group_ids == g)[0]
                 times = [event['particles'][i].first_step().t() for i in clust_ids[mask]]
                 idx   = np.argmin(times)
                 primaries.append(mask[idx])
@@ -459,7 +461,8 @@ class Pi0Chain:
             # For each predicted shower group, pick the most likely node as the primary
             group_ids = self._output['forward']['shower_group_pred']
             if 'shower_node_pred' not in self._output['forward']:
-                primaries = np.zeros(1, dtype=bool)
+                assert len(group_ids) == 1
+                primaries = [0]
             else:
                 from scipy.special import softmax
                 node_scores = softmax(self._output['forward']['shower_node_pred'], axis=1)
@@ -556,7 +559,7 @@ class Pi0Chain:
 
         elif self._shower_cluster == 'cone':
             # Build one cone per starting point, merge fragments and leftovers
-            # self.merge_fragments(event) # TODO: This module is defective, seems to output a lot of crap, must investigate
+            self.merge_fragments(event) # TODO: This module is obsolete. Assumes each cluster is a shower object, not the case. Should repurpose as a non-ML primary identifier
             self.merge_leftovers(event)
 
         elif self._shower_cluster == 'gnn':
@@ -707,22 +710,19 @@ class Pi0Chain:
         '''
         Proposes pi0 candidates (match pairs of showers)
         '''
-        self._output['matches']  = []
-        self._output['vertices'] = []
-        n_showers = len(self._output['showers'])
+        self._output['matches'], self._output['vertices'], self._output['separations'] = [], [], []
 
         if self._shower_match == 'label':
             # Make the pairs based on ancestor track id, only consider 111 ancestors
-            clust_ids     = self.get_fragment_labels(primary=True)
-            anc_ids, pdgs = [], []
+            clust_ids = self.get_fragment_labels(primary=True)
+            anc_ids, anc_pdgs = [], []
             for pid in clust_ids:
                 particle = event['particles'][pid]
                 anc_ids.append(int(particle.ancestor_track_id()))
-                pdgs.append(particle.ancestor_pdg_code())
+                anc_pdgs.append(particle.ancestor_pdg_code())
 
-            anc_ids, pdgs  = np.array(anc_ids), np.array(pdgs)
-            pi0_mask = np.where(pdgs == 111)[0]
-            for aid in np.unique(anc_ids[pi0_mask]):
+            anc_ids, anc_pdgs = np.array(anc_ids), np.array(anc_pdgs)
+            for aid in np.unique(anc_ids[anc_pdgs == 111]):
                 group_mask = np.where(anc_ids == aid)[0]
                 if len(group_mask) < 2: continue
                 if len(group_mask) > 2:
@@ -733,6 +733,7 @@ class Pi0Chain:
                 pos = event['particles'][group_mask[0]].ancestor_position()
                 self._output['matches'].append(group_mask)
                 self._output['vertices'].append(np.array([pos.x(), pos.y(), pos.z()]))
+                self._output['separations'].append(0.)
 
         elif self._shower_match == 'angle':
             # If the matcher needs PPN, extract the PPN track points
@@ -740,7 +741,7 @@ class Pi0Chain:
             if self._matcher._match_to_ppn: self.get_ppn_track_points(event)
 
             # Pair showers which are most likely to originate from a common vertex
-            self._output['matches'], self._output['vertices'], _ =\
+            self._output['matches'], self._output['vertices'], self._output['separations'] =\
                 self._matcher.find_matches(self._output['showers'],
                                            self._output['segment'][track_mask, :3],
                                            self._output.get('ppn_track_points'))
@@ -762,7 +763,6 @@ class Pi0Chain:
                 ppn_groups = inter_groups[np.argmin(dist_mat, axis=0)]
 
             # Run the matching algorithm on seperate interactions independently
-            self._output['matches'], self._output['vertices'] = [], []
             shower_mask, track_mask  = part_seg == [[larcv.kShapeShower],[larcv.kShapeTrack]]
             for g in np.unique(inter_groups):
                 group_mask = inter_groups == g
@@ -773,9 +773,11 @@ class Pi0Chain:
                 showers          = [self._output['showers'][i] for i in submask]
                 track_points     = [voxels[c] for c in particles[group_mask & track_mask]]
                 ppn_track_points = self._output.get('ppn_track_points')[ppn_groups == g] if self._matcher._match_to_ppn else None
-                matches, vertices, _ = self._matcher.find_matches(showers, track_points, ppn_track_points)
+                matches, vertices, separations =\
+                    self._matcher.find_matches(showers, track_points, ppn_track_points)
                 self._output['matches'].extend(submask[matches])
                 self._output['vertices'].extend(vertices)
+                self._output['separations'].extend(separations)
 
         # If requested, use the newly reconstructed Pi0 vertex to adjust the shower directions
         if self._shower_match_args.get('refit_dir', False):

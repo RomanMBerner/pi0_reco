@@ -1,33 +1,26 @@
 import numpy as np
 from larcv import larcv
-from scipy.spatial.distance import cdist
-from pi0.identification.matcher import Pi0Matcher
 
 class CSVData:
 
-    def __init__(self,fout):
+    def __init__(self, fout):
         self.name  = fout
         self._fout = None
         self._str  = None
-        self._dict = {}
 
-    def record(self, keys, vals):
-        for i, key in enumerate(keys):
-            self._dict[key] = vals[i]
-
-    def write(self):
+    def write(self, dict):
         if self._str is None:
-            self._fout=open(self.name,'w')
-            self._str=''
-            for i,key in enumerate(self._dict.keys()):
+            self._fout = open(self.name,'w')
+            self._str = ''
+            for i,key in enumerate(dict.keys()):
                 if i:
                     self._fout.write(',')
                     self._str += ','
                 self._fout.write(key)
-                self._str+='{:f}'
+                self._str += '{}'
             self._fout.write('\n')
-            self._str+='\n'
-        self._fout.write(self._str.format(*(self._dict.values())))
+            self._str += '\n'
+        self._fout.write(self._str.format(*(dict.values())))
 
     def flush(self):
         if self._fout: self._fout.flush()
@@ -41,175 +34,170 @@ class Pi0DataLogger:
     def __init__(self, name):
 
         # Initialize log files
-        self.label_log = CSVData(name+'_shower_label_data.csv')
-        self.pred_log = CSVData(name+'_shower_pred_data.csv')
+        self._label_log = CSVData(name+'_shower_label_data.csv')
+        self._pred_log  = CSVData(name+'_shower_pred_data.csv')
         print('Will store true shower information at: '+name+'_shower_label_data.csv')
         print('Will store reconstructed shower information at: '+name+'_shower_pred_data.csv')
 
     def log(self, event, output):
+
         # Get the entry index
         eid = event['index']
 
-        # Get an array for each truth and predictions
-        print(event['particles'][0])
-        for p in event['particles'][0]:
-            print(p.pdg_code(), p.shape(), p.id(), p.group_id())
-        primary_showers = [p for p in event['particles'][0]\
-                if p.shape == larcv.kShapeShower and p.id() == p.group_id()]
-        reco_showers = [] if 'showers' not in output else output['showers']
+        # Get the shower cluster fragment and group labels
+        shower_mask = event['segment_label'][:,-1] == larcv.kShapeShower
+        fragment_labels, group_labels = event['cluster_label'][:, 5], event['cluster_label'][:, 6]
 
-        # Loop over the true showers
-        shower_label = []
-        shower_pixel_label = []
-        for p in primary_showers:
-            shower = {}
-            shower['pos_x'], shower['pos_y'], shower['pos_z'] = p.position().x(), p.position.y(), p.position.z()
-            shower['first_x'], shower['first_y'], shower['first_z'] = p.first_step().x(), p.first_step.y(), p.first_step.z()
+        # Loop over the label shower groups, create an entry for each
+        shower_label, shower_pixel_label, particle_label = [], [], []
+        for i, g in enumerate(np.unique(group_labels[shower_mask])):
+            # Initialize new shower entry with its entry index
+            shower = {'event': eid, 'id': i}
 
-            norm = np.linalg.norm((p.momentum().x(), p.momentum().y(), p.momentum().z()))
-            shower['dir_x'], shower['dir_y'], shower['dir_z'] = p.momentum().x()/norm, p.momentum().y()/norm, p.momentum().z()/norm
-            shower['energy_init'] = p.energy_init()
-            shower['energy_deposit'] = p.energy_deposit()
+            # Identify the group's first fragment in time and the group primary fragment
+            group_mask = np.where(group_labels == g)[0]
+            clust_ids  = np.unique(fragment_labels[group_mask]).astype(np.int64)
+            times      = [event['particles'][i].first_step().t() for i in clust_ids]
+            first_id   = clust_ids[np.argmin(times)]
+            group_id   = event['particles'][first_id].group_id()
+            first_p, group_p = event['particles'][first_id], event['particles'][group_id]
 
-            mask = event['cluster_label'][0][:,6] == p.group_id()
-            shower['voxel_count'] = np.sum(mask)
-            shower['energy_int'] = np.sum(event['cluster_label'][0][mask,4])
+            # Record the first step of the first fragment in time (start point)
+            shower['first_x'], shower['first_y'], shower['first_z'] =\
+                first_p.first_step().x(), first_p.first_step().y(), first_p.first_step().z()
 
-            shower['event'] = eid
-            shower['id'] = p.id()
-            shower['group_id'] = p.groud_id()
-            shower['ancestor_id'] = p.ancestor_track_id()
-            shower['pdg_code'] = p.pdg_code()
-            shower['parent_pdg_code'] = p.parent_pdg_code()
+            # Record the normalized momentum of the primary fragment (direction)
+            mom = np.array([group_p.px(), group_p.py(), group_p.pz()])
+            shower['dir_x'], shower['dir_y'], shower['dir_z'] = np.array(mom)/np.linalg.norm(mom)
 
+            # Record the voxel count of the group and integrate the energy
+            shower['voxel_count'] = len(group_mask)
+            shower['energy_int']  = np.sum(event['cluster_label'][group_mask, 4])
+
+            # Record the requested list of label shower attributes
+            for key in ['group_id', 'ancestor_track_id', 'pdg_code', 'parent_pdg_code',\
+                        'ancestor_pdg_code', 'creation_process', 'energy_init', 'energy_deposit']:
+                shower[key] = getattr(group_p, key)()
+
+            # Append shower, record list of voxels associated with it
             shower_label.append(shower)
-            shower_pixel_label.append(np.where(mask))
+            shower_pixel_label.append(group_mask)
+            particle_label.append(group_p)
 
         # Loop over the showers built by the chain
-        shower_pred = []
-        shower_pixel_pred = []
-        for i, s in enumerate(reco_showers):
-            shower = {}
+        shower_pred, shower_pixel_pred = [], []
+        for i, s in enumerate(output.get('showers', [])):
+            # Initialize new shower entry with its entry index
+            shower = {'event': eid, 'id': i}
+
+            # Record the reconstructed start and direction of the reconstructed shower
             shower['first_x'], shower['first_y'], shower['first_z'] = s.start
             shower['dir_x'], shower['dir_y'], shower['dir_z'] = s.direction
 
-            shower_mask = output['shower_mask'][0]
+            # Record the voxel count and energy of the reconstructed shower
             shower['voxel_count'] = len(s.voxels)
             shower['energy_int'] = s.energy
 
-            shower['event'] = eid
-            shower['id'] = i
-
+            # Append shower, record list of voxels associated with it
             shower_pred.append(shower)
-            shower_pixel_pred.append(shower_mask[s.voxels])
+            shower_pixel_pred.append(s.voxels)
 
-        print(shower_pred)
+        # For each pair of one label and one reco shower, find the total number of shared voxels
+        voxels_label, voxels_pred = event['input_data'][:,:3], output['charge'][:,:3]
+        overlap_mat = np.empty((len(shower_label), len(shower_pred)))
+        for i, spl in enumerate(shower_pixel_label):
+            vl = voxels_label[spl]
+            for j, spp in enumerate(shower_pixel_pred):
+                vp = voxels_label[spp]
+                overlap_mat[i,j] = np.sum([(v == vl).all(axis=1) for v in vp])
 
         # Match showers together (one match per true shower, one match per reco shower)
-        voxels = output['energy'][:,:3]
-        dist_mat = np.full((len(shower_label), len(shower_pred)), 1e9)
         for i, spl in enumerate(shower_pixel_label):
 
             # If there is no proposed shower, fill the default values
             if not len(shower_pixel_pred):
                 shower_label[i]['match_id'] = -1
-                shower_label[i]['match_dist'] = -1
-                shower_label[i]['match_overlap'] = -1
-
-            # Find the shower that is closest to the true point set
-            for j, spp in enumerate(shower_pixel_pred):
-                if i > j:
-                    dist_mat[i,j] = np.min(cdist(voxels[spl], voxels[spp]))
-                elif j < i:
-                    dist_mat[i,j] = dist_mat[j,i]
+                shower_label[i]['match_overlap'] = 0
+                continue
 
             # Store the matched id
-            match_id = np.argmin(dist_mat[i])
-            shower_label[i]['match_id'] = match_id
-            shower_label[i]['match_dist'] = dist_mat[i, match_id]
-
-            # Store the pixel overlap
-            spp = shower_pixel_pred[match_id]
-            shower_label[i]['match_overlap'] = np.sum([(spl == k).any() for k in spp])
+            match_id = np.argmax(overlap_mat[i])
+            shower_label[i]['match_id'] = match_id if overlap_mat[i, match_id] else -1
+            shower_label[i]['match_overlap'] = overlap_mat[i, match_id]
 
         for i, spl in enumerate(shower_pixel_pred):
 
             # If there is no true shower, fill the default values
             if not len(shower_pixel_label):
                 shower_pred[i]['match_id'] = -1
-                shower_pred[i]['match_dist'] = -1
                 shower_pred[i]['match_overlap'] = -1
+                continue
 
             # Store the matched id
-            match_id = np.argmin(dist_mat[:,i])
-            shower_label[i]['match_id'] = match_id
-            shower_label[i]['match_dist'] = dist_mat[match_id, pred]
+            match_id = np.argmax(overlap_mat[:,i])
+            shower_pred[i]['match_id'] = match_id if overlap_mat[match_id, i] else -1
+            shower_pred[i]['match_overlap'] = overlap_mat[match_id, i]
 
-            # Store the pixel overlap
-            spl = shower_pixel_label[match_id]
-            shower_pred[i]['match_overlap'] = np.sum([(spl == k).any() for k in spp])
+        # Match label showers into a pi0 by using their ancestor information
+        for sl in shower_label:
+            for key in ['id', 'x', 'y', 'z', 'angle', 'mass']:
+                sl[f'pi0_{key}'] = -1
 
+        anc_ids  = np.array([p.ancestor_track_id() for p in particle_label])
+        # anc_pdgs = np.array([p.ancestor_pdg_code() for p in particle_label])
+        par_pdgs = np.array([p.parent_pdg_code() for p in particle_label])
+        for i, aid in enumerate(np.unique(anc_ids[par_pdgs == 111])):
+            group_mask = np.where(anc_ids == aid)[0]
+            if len(group_mask) < 2:
+                continue
 
-        # Match true photons into a pi0 by using parentage information
-        for i, sl1 in shower_label:
-            found_match = False
-            for j, sl2 in shower_label:
-                if i != j and sl1['parent_pdg_code'] == 111 and sl2['parent_pdg_code'] == 111 and\
-                        sl1['ancestor_id'] == sl2['ancestor_id']:
-                    # IS THAT GOOD ENOUGH (NEED TO CHECK, TODO)
-                    # Store the vertex
-                    found_match = True
-                    sl1['pi0_x'], sl1['pi0_y'], sl1['pi0_z'] = sl1['pos_x'], sl1['pos_y'], sl1['pos_z']
+            for j in group_mask:
+                # Store the pi0_label with a unique shower_id
+                sl = shower_label[j]
+                sl['pi0_id'] = i
 
-                    # Store the relative angle between photons (dot product)
-                    sl1['pi0_angle'] = np.dot((sl1['dir_x'], sl1['dir_y'],\
-                            sl1['dir_z']),(sl2['dir_x'], sl2['dir_y'], sl2['dir_z']))
+                # Store the position of the decay vertex (pi0 production vertex)
+                pos = particle_label[j].ancestor_position()
+                sl['pi0_x'], sl['pi0_y'], sl['pi0_z'] = pos.x(), pos.y(), pos.z()
 
-                    # Store the mass
-                    sl1['pi0_mass'] = np.sqrt(2.*sl1['energy_int']*sl2['energy_int']*(1-sl1['pi0_angle']))
-                if not found_match:
-                    sl1['pi0_x'], sl1['pi0_y'], sl1['pi0_z'] = -1, -1, -1
-                    sl1['pi0_angle'] = -1
-                    sl1['pi0_mass'] = -1
+            # If there are exactly two showers, get the angle between photons and mass estimate
+            if len(group_mask) == 2:
+                sl1, sl2 = shower_label[group_mask[0]], shower_label[group_mask[1]]
+                angle = np.arccos(np.dot((sl1['dir_x'], sl1['dir_y'], sl1['dir_z']),\
+                                         (sl2['dir_x'], sl2['dir_y'], sl2['dir_z'])))
+                mass  = np.sqrt(2.*sl1['energy_int']*sl2['energy_int']*(1-np.cos(angle)))
+                sl1['pi0_angle'] = sl2['pi0_angle'] = angle
+                sl1['pi0_mass']  = sl2['pi0_mass']  = mass
 
         # Match proposed photons into a pi0 by using distance of closest approach
-        for i, s1 in reco_showers:
+        for sp in shower_pred:
+            for key in ['id', 'x', 'y', 'z', 'angle', 'separation', 'mass']:
+                sp[f'pi0_{key}'] = -1
 
-            # If there is only one shower, keep going
-            sp = shower_pred[i]
-            if len(reco_showers) < 2:
-                sp['pi0_x'], sp['pi0_y'], sp['pi0_z'] = -1, -1, -1
-                sp['pi0_angle'] = -1
-                sp['pi0_mass'] = -1
+        for i, match in enumerate(output.get('matches', [])):
+            sp1, sp2 = shower_pred[match[0]], shower_pred[match[1]]
+            angle    = np.arccos(np.dot((sp1['dir_x'], sp1['dir_y'], sp1['dir_z']),\
+                                        (sp2['dir_x'], sp2['dir_y'], sp2['dir_z'])))
+            for sp in [sp1, sp2]:
+                # Store the reconstructed pi0 with a unique id
+                sp['pi0_id'] = i
 
-            # Compute distance between points of closests approach for all combinations
-            dists, vertices = [], []
-            for j, s2 in reco_showers:
-                # Find the points of closest approach
-                if i == j:
-                    continue
-                pocas = Pi0Matcher.find_pocas(np.vstack(s1.start, s2.start),\
-                                 np.vstack(s1.direction, s2.direction))
+                # Store the position of the reconstructed decay vertex
+                sp['pi0_x'], sp['pi0_y'], sp['pi0_z'] = output['vertices'][i]
 
-                # Store the distance the midpoint (vertex approx)
-                dists.append(np.linalg.norm(pocas[1]-pocas[0]))
-                verticed.append((pocas[0]+pocas[1])/2)
+                # Store the reconstructed angle between the two showers
+                sp['pi0_angle'] = angle
 
-            # Select the closest shower, store all the info
-            match_id = np.argmin(dists)
-            sp['pi0_x'], sp['pi0_y'], sp['pi0_z'] = vertices[match_id]
-            sp['pi0_sep'] = dists[match_id]
+                # Store the total angular disagreement between the two showers
+                sp['pi0_separation'] = output['separations'][i]
 
-            # Store the relative angle between photons (dot product)
-            sp['pi0_angle'] = np.dot(s1.direction, reco_showers[match_id].direction)
-
-            # Store the mass
-            sp['pi0_mass'] = np.sqrt(2.*s1.energy*s2.energy*(1-sp['pi0_angle']))
+                # Store the reconstructed mass
+                sp['pi0_mass']  = output['masses'][i]
 
         # Store the data
-        self.label_log.record(shower_label.keys(), shower_label.values())
-        self.label_log.write()
-        self.label_log.flush()
-        self.pred_log.record(shower_pred.keys(), shower_pred.values())
-        self.pred_log.write()
-        self.pred_log.flush()
+        for sl in shower_label:
+            self._label_log.write(sl)
+            self._label_log.flush()
+        for sp in shower_pred:
+            self._pred_log.write(sp)
+            self._pred_log.flush()
