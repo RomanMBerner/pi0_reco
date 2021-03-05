@@ -214,6 +214,7 @@ class Pi0Chain:
         from 3D charge information to Pi0 masses.
         '''
         n_events = len(self._hs.data_io)
+        self._print(f'Will process {n_events} batches')
         for i in range(n_events):
             self.run_loop()
 
@@ -223,7 +224,7 @@ class Pi0Chain:
         Runs the full Pi0 reconstruction chain on a single batch,
         from 3D charge information to Pi0 masses.
         '''
-        # Load a batch
+        # Load a batch, unwrap if necessary
         if not self._network:
             from mlreco.utils.unwrap import unwrap_3d_scn
             input = next(self._data_set)

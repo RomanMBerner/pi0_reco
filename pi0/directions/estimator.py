@@ -2,6 +2,8 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 from sklearn.decomposition import PCA
 from scipy.spatial.distance import cdist
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import shortest_path
 
 class DirectionEstimator():
 
@@ -12,6 +14,7 @@ class DirectionEstimator():
         self._directions   = None
 
         self._mode         = cfg.get('mode', 'cent')    # Method for estimating direction
+        self._metric       = cfg.get('metric', 'path')  # Method to compute the distance from the origin
         self._min_distance = cfg.get('min_distance', 5) # Minimum neighborhood radius to consider to estimate direction
         self._max_distance = cfg.get('max_distance', 5) # Neighborhood radius used to estimate direction if not optimize
         self._optimize     = cfg.get('optimize', False) # Optimize the neighborhood radius to minimize transverse spread
@@ -21,6 +24,9 @@ class DirectionEstimator():
         modes = ['cent', 'pca']
         assert self._mode in modes,\
             f'Direction estimation mode {self._mode} not recognized, must be one of {modes}'
+        metrics = ['euclid', 'path']
+        assert self._metric in metrics,\
+            f'Distance metric {self._metric} not recognized, must be one of {metrics}'
 
     def get_directions(self, primaries, fragments):
         """
@@ -38,26 +44,32 @@ class DirectionEstimator():
             origin = p[:3]
             coords = fragments[i][:,:3]
 
+            # If necessary, compute distance from start point to fragment voxels
+            if self._optimize or self._max_distance > 0:
+                minid = np.argmin(cdist(coords, [origin]).flatten())
+                if self._metric == 'euclid':
+                    dists    = cdist(coords, [coords[minid]]).flatten()
+                elif self._metric == 'path':
+                    dist_mat = cdist(coords, coords)
+                    graph    = csr_matrix(dist_mat * (dist_mat < 1.999))
+                    dists    = shortest_path(csgraph=graph, directed=False, indices=minid)
+
             # If a maximum distance from the fragment origin is specified, down select points
             if not self._optimize and self._max_distance > 0:
-                minid = np.argmin(cdist(coords, [origin]).flatten())
-                dists = cdist(coords, [coords[minid]]).flatten()
                 dist_mask = np.where(dists < self._max_distance)[0]
                 coords = coords[dist_mask]
 
             # If optimization is required, find neighborhood that minimizes relative transverse spread
             elif self._optimize:
                 # Order the cluster points by increasing distance to the start point
-                minid = np.argmin(cdist(coords, [origin]).flatten())
-                dist_mat = cdist(coords, [coords[minid]]).flatten()
-                order = np.argsort(dist_mat)
+                order  = np.argsort(dists)
                 coords = coords[order]
-                dist_mat = dist_mat[order]
+                dists  = dists[order]
 
                 # If a minimum distance is specified, find which is the first point to consider
                 min_id = 2
                 if self._min_distance > 0:
-                    inside_mask = np.where(dist_mat < self._min_distance)[0]
+                    inside_mask = np.where(dists < self._min_distance)[0]
                     if len(inside_mask):
                         min_id = inside_mask[-1]
 
@@ -65,17 +77,17 @@ class DirectionEstimator():
                 labels = np.zeros(len(coords))
                 meank = np.mean(coords[:min_id+1], axis=0)
                 covk = (coords[:min_id+1]-meank).T.dot(coords[:min_id+1]-meank)/(min_id+1)
-                for i in range(min_id, len(coords)):
+                for k in range(min_id, len(coords)):
                     # Get the eigenvalues and eigenvectors, identify point of minimum secondary spread
                     w, _ = np.linalg.eigh(covk)
-                    labels[i] = np.sqrt(w[2]/(w[0]+w[1])) if (w[0]+w[1]) else 0.
-                    if dist_mat[i] == dist_mat[i-1]:
-                        labels[i-1] = 0.
+                    labels[k] = np.sqrt(w[2]/(w[0]+w[1])) if (w[0]+w[1]) else 0.
+                    if dists[k] == dists[k-1]:
+                        labels[k-1] = 0.
 
                     # Increment mean and matrix
-                    if i != len(coords)-1:
-                        meank = ((i+1)*meank+coords[i+1])/(i+2)
-                        covk = (i+1)*covk/(i+2) + (coords[i+1]-meank).reshape(-1,1)*(coords[i+1]-meank)/(i+1)
+                    if k != len(coords)-1:
+                        meank = ((k+1)*meank+coords[k+1])/(k+2)
+                        covk = (k+1)*covk/(k+2) + (coords[k+1]-meank).reshape(-1,1)*(coords[k+1]-meank)/(k+1)
 
                 # Subselect coords that are most track-like
                 max_id = np.argmax(labels)
