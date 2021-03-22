@@ -261,6 +261,22 @@ class Pi0Chain:
             self._log(event, self._output)
             if self._analyse:
                 self._analyser.record(event, self._output)
+                
+                if self._fiducial == 'none':
+                    max_dist = 0
+                elif self._fiducial == 'edge_dist':
+                    max_dist = self._fiducial_args.get('max_distance')
+                    #lower    = self._fiducial_args.get('lower_bound', 0)
+                    #upper    = self._fiducial_args.get('upper_bound', 768)
+                else:
+                    self._print(' Method', self._fiducial, 'not recognized...')
+
+                self.true_info = {}
+                self.true_info = self._analyser.extract_true_information(event, max_dist)
+                
+                self.reco_info = {}
+                self.reco_info = self._analyser.extract_reco_information(event, self._output, max_dist)
+                #print(' === reco_info: ', reco_info)
 
 
     def run_modules(self, event):
@@ -832,5 +848,10 @@ class Pi0Chain:
         """
         Draws the event processed in the last run_loop.
         """
-        #draw_event(self._output, self._analyser.true_info, **kwargs)
-        draw_event(self._output, None, **kwargs)
+        draw_truth   = True
+        draw_modules = False
+        
+        if draw_truth:
+            draw_event(self._output, self._analyser.true_info, draw_modules, **kwargs)
+        else:
+            draw_event(self._output, None, **kwargs)

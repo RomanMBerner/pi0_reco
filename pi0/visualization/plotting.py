@@ -75,8 +75,9 @@ def module_boxes(arr=[2,2], size=[378,378,756]):
     return boxes
 
 
-def get_truth_plots(truth, graph_data):
-
+def get_truth_plots(truth):
+    graph_data = []
+    
     # Add points from true electronShowers
     '''
     colors = plotly.colors.qualitative.Light24
@@ -170,13 +171,13 @@ def get_truth_plots(truth, graph_data):
     '''
     # Add shower's true 1st (in time) step
     # ------------------------------------
-    '''
+    #'''
     if len(truth['shower_first_edep'])>0:
         shower_first_edep = truth['shower_first_edep']
         #print(' shower_first_edep: ', shower_first_edep)
         graph_data += scatter_points(np.asarray(shower_first_edep), markersize=5, color='red')
-        graph_data[-1].name = 'True showers 1st steps'
-    '''
+        graph_data[-1].name = 'True showers 1st edep'
+    #'''
 
     # Add manually defined 3D points
     # ------------------------------------
@@ -200,7 +201,7 @@ def get_truth_plots(truth, graph_data):
     if len(truth['gamma_pos'])>0:
         true_pi0_decays = truth['gamma_pos']
         graph_data += scatter_points(np.asarray(true_pi0_decays),markersize=5, color='green')
-        graph_data[-1].name = 'True pi0 decay vertices'
+        graph_data[-1].name = 'Pi0 decay vertex (true)'
     #'''
 
     # Add true photon's directions (based on true pi0 decay vertex and true photon's 1st (in time) edep)
@@ -225,10 +226,11 @@ def get_truth_plots(truth, graph_data):
             first_steps = truth['gamma_first_step'][i]
             points = [vertex, first_steps]
             graph_data += scatter_points(np.array(points),markersize=4,color='blue')
-            graph_data[-1].name = 'True photon %i vertex to first step (einit: %.2f, edep: %.2f)'\
+            graph_data[-1].name = 'True photon %i vtx to 1st step (einit: %.2f, edep: %.2f)'\
                                    %(i,truth['gamma_ekin'][i],truth['gamma_edep'][i])
             graph_data[-1].mode = 'lines,markers'
     #'''
+    return graph_data
 
 
 def draw_event(output, truth=None, draw_modules=False, **kwargs):
@@ -290,7 +292,7 @@ def draw_event(output, truth=None, draw_modules=False, **kwargs):
 
         # Draw the shower starts
         graph_data += scatter_points(np.vstack(starts), markersize=4, color='black')
-        graph_data[-1].name = 'Shower starts'
+        graph_data[-1].name = 'Shower starts (reco)'
 
         # Draw the shower directions
         dir_segments = np.concatenate([[starts[i], starts[i]+10*dirs[i], [None,None,None]] for i in range(n_showers)])
@@ -314,11 +316,15 @@ def draw_event(output, truth=None, draw_modules=False, **kwargs):
 
         # Draw the decay vertices
         graph_data += scatter_points(np.vstack(output['vertices']), markersize=4, color='lightgreen')
-        graph_data[-1].name = 'Pi0 decay vertices'
+        graph_data[-1].name = 'Pi0 decay vertex (reco)'
 
     # Add outer module dimensions (TODO: Check dimensions, probably add active volumes instead of outer module edges)
     if draw_modules:
         graph_data += module_boxes()
+    
+    # Add truth information
+    if truth != None:
+        graph_data += get_truth_plots(truth)
 
     # Draw
     iplot(go.Figure(data=graph_data,layout=layout(**kwargs)))
