@@ -253,14 +253,19 @@ def draw_event(output, truth=None, draw_modules=False, **kwargs):
 
     # Draw the reconstructed energy in each voxel
     energy = output['energy']
-    graph_data += scatter_points(energy, markersize=2, color=energy[:,-1], colorscale='Inferno')
-    graph_data[-1].name = 'Energy'
+    graph_data += scatter_points(energy, markersize=2, color=np.log(energy[:,-1]), colorscale='Inferno')
+    graph_data[-1].name = 'Energy (log)'
 
     # Draw the proposed PPN track points, if present:
     if 'ppn_track_points' in output:
         points = output['ppn_track_points']
         graph_data += scatter_points(points,markersize=4,color='magenta')
         graph_data[-1].name = 'PPN track points'
+        
+    if 'ppn_shower_points' in output:
+        points = output['ppn_shower_points']
+        graph_data += scatter_points(points,markersize=4,color='purple')
+        graph_data[-1].name = 'PPN shower points'
 
     # Draw the shower fragments
     if 'shower_fragments' in output:
@@ -291,7 +296,7 @@ def draw_event(output, truth=None, draw_modules=False, **kwargs):
         graph_data[-1].name = 'Showers'
 
         # Draw the shower starts
-        graph_data += scatter_points(np.vstack(starts), markersize=4, color='black')
+        graph_data += scatter_points(np.vstack(starts), markersize=4, color='yellow')
         graph_data[-1].name = 'Shower starts (reco)'
 
         # Draw the shower directions

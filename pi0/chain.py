@@ -195,9 +195,11 @@ class Pi0Chain:
         return np.array(labels)
 
 
-    def get_ppn_track_points(self, event):
+    def get_ppn_points(self, event):
         '''
-        Extracts PPN track point predictions from the raw PPN output.
+        Extracts PPN point predictions from the raw PPN output.
+        At the moment, only track and shower labeled points are considered.
+        If needed, also add delta, michel and LEScatter points.
         '''
         if 'ppn_track_points' not in self._output:
             from mlreco.utils.ppn import uresnet_ppn_type_point_selector
@@ -206,6 +208,13 @@ class Pi0Chain:
             point_sem = points[:,-1]
             ppn_track_points = points[point_sem == larcv.kShapeTrack, :3]
             self._output['ppn_track_points'] = ppn_track_points
+        if 'ppn_shower_points' not in self._output:
+            from mlreco.utils.ppn import uresnet_ppn_type_point_selector
+            points = uresnet_ppn_type_point_selector(event['input_data'],\
+                {key: [self._output['forward'][key]] for key in ['segmentation', 'points', 'mask_ppn2']})
+            point_sem = points[:,-1]
+            ppn_shower_points = points[point_sem == larcv.kShapeShower, :3]
+            self._output['ppn_shower_points'] = ppn_shower_points
 
 
     def run(self):
@@ -537,10 +546,36 @@ class Pi0Chain:
             points_tensor = self._output['forward']['points']
             for i, s in enumerate(self._output['showers']):
                 f       = s.voxels
-                dmask   = np.where(np.max(np.abs(points_tensor[f,:3]), axis=1) < 1.)[0]
+                #dmask   = np.where(np.max(np.abs(points_tensor[f,:3]), axis=1) < 1.)[0]
+                dmask   = np.where(np.max(np.abs(points_tensor[f,:3]), axis=1) < 5.)[0] # Allow PPN shower and track points to be predicted oustide of the fragment
                 scores  = softmax(points_tensor[f,3:5], axis=1)
+                
+                # Take the ppn point with the maximum score (no matter wether it's track or shower like)
                 argmax  = dmask[np.argmax(scores[dmask,-1])] if len(dmask) else np.argmax(scores[:,-1])
-                start   = voxels[f][argmax,:3] + points_tensor[f][argmax,:3] + 0.5
+                # TODO: Test  a method which considers: If there are > 1 PPN point with score > 0.5:
+                # Take the one which is closest to the point determined by curvature.
+                
+                thresholds = np.full((1,len(scores[argmax])), 0.5)[0]
+                # If at least 1 of the PPN scores (track or shower) > threshold:
+                if  np.any(np.greater(scores[argmax], thresholds)) and len(scores) > 0:
+                    ppn_point = voxels[f][argmax,:3] + points_tensor[f][argmax,:3]# + 0.5
+                    #print(' PPN point: ', ppn_point)
+
+                    # If the predicted PPN point is > 3 pixels apart from the closest shower's edep:
+                    if np.argmin(np.linalg.norm(np.array(np.array(voxels[f])-np.array(ppn_point)),axis=1)) > 3.:
+                        #print(' Take the closest showers edep as shower start point...')
+                        start = voxels[f][np.argmin(np.linalg.norm(np.array(np.array(voxels[f])-np.array(ppn_point)),axis=1))]
+                    else:
+                        #print(' Take the predicted PPN point as shower start point... ')
+                        start = ppn_point
+                    #print(' PPN start: ', start)
+                # If all scores are <= the threshold value:
+                else:
+                    #print(' INFORMATION: PPN point scores <= tresholds (', scores[argmax], '<=', thresholds, '). Use curvature method to find shower start point ... ')
+                    curvature_startFinder = StartPointFinder(**self._shower_start_args)
+                    curvature_start = curvature_startFinder.find_start_points(self._output['energy'][:,:3],[f])[0]
+                    #print(' Curvature start: ', curvature_start)
+                    start = curvature_start
                 s.start = start
 
 
@@ -701,7 +736,7 @@ class Pi0Chain:
 
         elif self._shower_id == 'vertex':
             # Uses the proximity to a vertex (PPN track point) as a criterion for e/gamma separation
-            self.get_ppn_track_points(event)
+            self.get_ppn_points(event)
             self._identifier.set_vertex_lr(self._output['showers'], self._output['ppn_track_points'])
 
         elif self._shower_id == 'gnn':
@@ -770,7 +805,7 @@ class Pi0Chain:
         elif self._shower_match == 'angle':
             # If the matcher needs PPN, extract the PPN track points
             track_mask = self._output['segment'][:,-1] == larcv.kShapeTrack
-            if self._matcher._match_to_ppn: self.get_ppn_track_points(event)
+            if self._matcher._match_to_ppn: self.get_ppn_points(event)
 
             # Pair showers which are most likely to originate from a common vertex
             self._output['matches'], self._output['vertices'], self._output['separations'] =\
@@ -790,7 +825,7 @@ class Pi0Chain:
             voxels = self._output['segment'][:,:3]
             if self._matcher._match_to_ppn:
                 from scipy.spatial.distance import cdist
-                self.get_ppn_track_points(event)
+                self.get_ppn_points(event)
                 dist_mat   = np.vstack([np.min(cdist(self._output['ppn_track_points'], voxels[c]), axis=1).flatten() for c in particles])
                 ppn_groups = inter_groups[np.argmin(dist_mat, axis=0)]
 
@@ -849,7 +884,7 @@ class Pi0Chain:
         Draws the event processed in the last run_loop.
         """
         draw_truth   = True
-        draw_modules = False
+        draw_modules = True
         
         if draw_truth:
             draw_event(self._output, self._analyser.true_info, draw_modules, **kwargs)
