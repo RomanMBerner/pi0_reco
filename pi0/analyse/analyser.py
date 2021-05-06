@@ -136,6 +136,7 @@ class Analyser():
     def __init__(self):
         self.initialize_true()
         self.initialize_reco()
+        self.initialize_particles()
 
 
     def record(self, event, output, fiducial=0):
@@ -202,7 +203,23 @@ class Analyser():
                                                                          # Note: If photon leaves detector without producing an edep, this is NOT classified as OOFV.
                                                                          # For those events: Consider self.true_info['n_voxels']
         return self.reco_info
+    
+    
+    def initialize_particles(self):
+        self.particles_info = {}
+        
+        self.particles_info['particles'] = None
+        return self.particles_info
 
+    
+    def extract_particles_information(self, event):
+        '''
+        Obtain true informations about particles and dump them to self.particles_info['particles']
+        '''
+        self.initialize_particles()
+        self.particles_info['particles'] = event['particles']
+        return self.particles_info
+    
 
     def extract_true_information(self, event, fiducial):
         '''

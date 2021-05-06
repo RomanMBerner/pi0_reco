@@ -242,8 +242,8 @@ def draw_event(output, truth=None, draw_modules=False, **kwargs):
 
     # Draw the raw input to the reconstruction chain (charge)
     charge = output['charge']
-    graph_data += scatter_points(charge, markersize=2, color=charge[:,-1], colorscale='Inferno')
-    graph_data[-1].name = 'Input'
+    graph_data += scatter_points(charge, markersize=2, color=np.log(charge[:,-1]), colorscale='Inferno')
+    graph_data[-1].name = 'Input charge (log)'
 
     # Draw the semantic segmentation predictions
     segment = output['segment']
@@ -252,9 +252,9 @@ def draw_event(output, truth=None, draw_modules=False, **kwargs):
     graph_data[-1].name = 'Semantics'
 
     # Draw the reconstructed energy in each voxel
-    energy = output['energy']
-    graph_data += scatter_points(energy, markersize=2, color=np.log(energy[:,-1]), colorscale='Inferno')
-    graph_data[-1].name = 'Energy (log)'
+    #energy = output['energy']
+    #graph_data += scatter_points(energy, markersize=2, color=np.log(energy[:,-1]), colorscale='Inferno')
+    #graph_data[-1].name = 'Energy (log)'
 
     # Draw the proposed PPN track points, if present:
     if 'ppn_track_points' in output:
