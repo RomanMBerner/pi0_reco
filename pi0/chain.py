@@ -233,7 +233,6 @@ class Pi0Chain:
         Runs the full Pi0 reconstruction chain on a single batch,
         from 3D charge information to Pi0 masses.
         '''
-        print(' in run loop 1')
         # Load a batch, unwrap if necessary
         if not self._network:
             from mlreco.utils.unwrap import unwrap_3d_scn
